@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.8)
 
-project(PROGXPRIME LANGUAGES CXX)
+project(ProgressiveXPrime LANGUAGES CXX)
 
 # indicate if OPENMP should be enabled
 option(USE_OPENMP "Use OPENMP" ON)

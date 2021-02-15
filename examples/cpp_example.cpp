@@ -6,6 +6,12 @@
 #include <Eigen/Eigen>
 
 #include "progx_utils.h"
+#include "losses.h"
+#include "progressive_x_prime.h"
+#include "median_shift_clustering.h"
+#include "mean_shift_clustering.h"
+#include "dbscan_clustering.h"
+#include "distances.h"
 #include "utils.h"
 #include "GCoptimization.h"
 #include "grid_neighborhood_graph.h"
@@ -14,11 +20,10 @@
 #include "prosac_sampler.h"
 #include "progressive_napsac_sampler.h"
 #include "fundamental_estimator.h"
+#include "solver_homography_three_point.h"
 #include "homography_estimator.h"
+#include "subspace4_estimator.h"
 #include "essential_estimator.h"
-
-#include "progressive_x.h"
-#include "progress_visualizer.h"
 
 #include <ctime>
 #include <direct.h>
@@ -26,11 +31,14 @@
 #include <sys/stat.h>
 
 #include <mutex>
-#include <glog/logging.h>
 
 struct stat info;
 
 enum Problem { Homography, TwoViewMotion, RigidMotion, Pose6D };
+
+typedef clustering::density::DBScanClustering<
+	progx::ModelData,
+	clustering::distances::TanimotoDistance<progx::ModelData>> ClusteringMethod;
 
 void testMultiHomographyFitting(
 	const std::string& scene_name_, // The name of the current scene 
@@ -42,12 +50,29 @@ void testMultiHomographyFitting(
 	const double confidence_,
 	const double inlier_outlier_threshold_,
 	const double spatial_coherence_weight_,
-	const double neighborhood_ball_radius_,
+	const size_t starting_hypothesis_number_,
+	const size_t added_hypothesis_number_,
 	const double maximum_tanimoto_similarity_,
-	const size_t minimum_point_number_,
+	const double minimum_point_number_,
 	const bool visualize_results_,
 	const bool visualize_inner_steps_,
 	const bool has_detected_correspondences_ = false);
+
+void testMultiMotionFitting(
+	const std::string& scene_name_, // The name of the current scene 
+	const std::string& video_path_, // The path of the source image
+	const std::string& input_correspondence_path_, // The path of the detected correspondences
+	const std::string& output_correspondence_path_,  // The path of the correspondences saved with their labels
+	const double confidence_, // The RANSAC confidence value
+	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
+	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
+	const size_t starting_hypothesis_number_,
+	const size_t added_hypothesis_number_,
+	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
+	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
+	const bool visualize_results_, // A flag to determine if the results should be visualized
+	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
+	const bool has_detected_correspondences_);
 
 void testMulti6DPoseFitting(
 	const std::string& scene_name_, // The name of the current scene 
@@ -69,15 +94,16 @@ void testMultiTwoViewMotionFitting(
 	const std::string& input_correspondence_path_, // The path of the detected correspondences
 	const std::string& output_correspondence_path_,  // The path of the correspondences saved with their labels
 	const std::string& output_match_image_path_, // The path where the images with the labelings are saved
-	const double confidence_,
-	const double inlier_outlier_threshold_,
-	const double spatial_coherence_weight_,
-	const double neighborhood_ball_radius_,
-	const double maximum_tanimoto_similarity_,
-	const size_t minimum_point_number_,
-	const bool visualize_results_,
-	const bool visualize_inner_steps_,
-	const bool has_detected_correspondences_ = false);
+	const double confidence_, // The RANSAC confidence value
+	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
+	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
+	const size_t starting_hypothesis_number_,
+	const size_t added_hypothesis_number_,
+	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
+	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
+	const bool visualize_results_, // A flag to determine if the results should be visualized
+	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
+	const bool has_detected_correspondences_);
 
 bool initializeScene(const std::string& scene_name_,
 	std::string& src_image_path_,
@@ -102,133 +128,251 @@ void drawMatches(
 
 std::mutex writing_mutex;
 int settings_number = 0;
+constexpr bool runTestHomography = false;
+constexpr bool runTestTwoViewMotion = true;
+constexpr bool runTestMotion = false;
 
 std::vector<std::string> getAvailableTestScenes(const Problem& problem_);
 
 int main(int argc, const char* argv[])
 {
-	/*const std::string root_directory = ""; // The directory where the 'data' folder is found
+	const std::string root_directory = ""; // The directory where the 'data' folder is found
+
+	const double confidence = 0.99,
+		spatial_coherence_weight = 0.1,
+		neighborhood_ball_radius = 20,
+		maximum_tanimoto_similarity = 0.8;
 
 	const bool visualize_results = true, // A flag to tell if the resulting labeling should be visualized
 		visualize_inner_steps = false; // A flag to tell if the steps of the algorithm should be visualized
 
-	const double confidence = 0.9, // The required confidence in the results
-		maximum_tanimoto_similarity = 0.9, // The maximum tanimoto similarity used to reject models early
-		spatial_coherence_weight = 0.1, // The spatial coherence weight used both in PEARL and GC-RANSAC
-		neighborhood_ball_radius = 20.0; // The radius of the ball hyper-sphere used for determining the neighborhood graph.
-
-	for (const std::string& scene : getAvailableTestScenes(Problem::Pose6D))
+	if constexpr (runTestMotion)
 	{
-		const size_t minimum_point_number = 2 * 3; // The minimum number of inliers needed to accept a model instance, i.e., two times the sample size
-		const double inlier_outlier_threshold = 4.0; // The inlier-outlier threshold used to assign points to models
+		const std::vector<double> thresholds = { 0.0004, 0.0006, 0.0008, 0.001, 0.0025, 0.075, 0.01, 0.0125, 0.025, 0.05, 0.1, 0.5, 1.0 };
+		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85, 0.90 };
+		const std::vector<int> minimumPoints = { 5, 10, 15, 20 };
+		const std::vector<double> confidences = { /*0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
+		const std::vector<int> maximumIterations = { 10, 20, 50, 100, 150, 200 };
+		const std::vector<int> startingHypothesisNumber = { 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		const std::vector<int> addedHypothesisNumber = { 1, 2, 5, 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		int repetitions = 3;
 
-		printf("Processed scene = %s.\n", scene.c_str());
+		std::vector<progx::MultiModelSettings> settings;
 
-		const std::string input_correspondence_path =
-			root_directory + "data/" + scene + "/" + scene + ".txt"; // Path where the detected correspondences are saved
-		const std::string intrinsics_path =
-			root_directory + "data/" + scene + "/" + scene + "_intrinsics.txt"; // Path where the intrinsic camera parameters are
-		const std::string ground_truth_path =
-			root_directory + "data/" + scene + "/" + scene + "_poses.txt"; // Path where the ground truth poses are
-		const std::string  output_correspondence_path =
-			root_directory + "results/" + scene + "/result_" + scene + ".txt"; // Path where the inlier correspondences are saved
+		for (int rep = 0; rep < repetitions; ++rep)
+			for (const auto& minimum_point_number : minimumPoints)
+				for (const auto& maxIters : maximumIterations)
+					for (const auto& threshold : thresholds)
+						for (const auto& tanimoto : tanimotoDistances)
+							for (const auto& confidence : confidences)
+								for (const auto& startNumber : startingHypothesisNumber)
+									for (const auto& addedNumber : addedHypothesisNumber)
+									{
+										settings.resize(settings.size() + 1);
+										auto& item = settings.back();
+										item.minimumInlierNumber = minimum_point_number;
+										item.maximumIterations = maxIters;
+										item.inlierOutlierThreshold = threshold;
+										item.modelDistanceThreshold = tanimoto;
+										item.confidence = confidence;
+										item.startingHypothesisNumber = startNumber;
+										item.addedHypothesisNumber = addedNumber;
+									}
 
-		testMulti6DPoseFitting(
-			scene, // The name of the current scene
-			input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
-			intrinsics_path,// Path where the intrinsic camera parameters are
-			ground_truth_path, // Path where the ground truth poses are
-			output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
-			confidence, // The RANSAC confidence value
-			inlier_outlier_threshold, // The used inlier-outlier threshold in GC-RANSAC.
-			spatial_coherence_weight, // The weight of the spatial coherence term in the graph-cut energy minimization.
-			neighborhood_ball_radius, // The radius of the neighborhood ball for determining the neighborhoods.
-			maximum_tanimoto_similarity, // The maximum Tanimoto similarity of the proposal and compound instances.
-			minimum_point_number); // The minimum number of inlier for a model to be kept.
+		size_t settingIdx = 0;
+#pragma omp parallel for num_threads(24)
+		for (int settingIdx = 0; settingIdx < settings.size(); ++settingIdx)
+		{
+			for (const std::string& scene : getAvailableTestScenes(Problem::RigidMotion))
+			{
+				printf("Processed scene = %s.\n", scene.c_str());
+
+				std::string video_path = root_directory + "data/" + scene + "/" + scene + ".avi", // Path of the source image
+					input_correspondence_path = root_directory + "data/" + scene + "/" + scene + ".txt", // Path where the detected correspondences are saved
+					output_correspondence_path = "results/" + scene + "/result_" + scene + ".txt"; // Path where the inlier correspondences are saved
+
+				const auto& currentSettings = settings[settingIdx];
+
+				testMultiMotionFitting(
+					scene, // The name of the current scene
+					video_path, // The source image's path
+					input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+					output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+					currentSettings.confidence, // The RANSAC confidence value
+					currentSettings.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+					currentSettings.maximumIterations,
+					currentSettings.startingHypothesisNumber,
+					currentSettings.addedHypothesisNumber,
+					currentSettings.modelDistanceThreshold,
+					currentSettings.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+					visualize_results, // A flag to determine if the results should be visualized
+					visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+					true);  // In this dataset, the correspondences and a reference labeling are provided				
+			}
+
+		}
 	}
 
-	for (const std::string& scene : getAvailableTestScenes(Problem::Homography))
+	if constexpr (runTestTwoViewMotion)
 	{
-		const size_t minimum_point_number = 2 * 4; // The minimum number of inliers needed to accept a model instance, i.e., two times the sample size
-		const double inlier_outlier_threshold = 3.0; // The inlier-outlier threshold used to assign points to models
+		const std::vector<double> thresholds = { 0.75, 1.0, 1.5, 2.0, 3.0 };
+		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85, 0.90 };
+		const std::vector<int> minimumPoints = { 20, 30, 40 };
+		const std::vector<double> confidences = { /*0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
+		const std::vector<int> maximumIterations = { 50, 75, 100 };
+		const std::vector<int> startingHypothesisNumber = { 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		const std::vector<int> addedHypothesisNumber = { 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		int repetitions = 3;
 
-		printf("Processed scene = %s.\n", scene.c_str());
+		std::vector<progx::MultiModelSettings> settings;
 
-		std::string src_image_path, // Path of the source image
-			dst_image_path, // Path of the destination image
-			input_correspondence_path, // Path where the detected correspondences are saved
-			output_correspondence_path, // Path where the inlier correspondences are saved
-			output_matched_image_path; // Path where the matched image is saved
+		for (int rep = 0; rep < repetitions; ++rep)
+		for (const auto& minimum_point_number : minimumPoints)
+			for (const auto& maxIters : maximumIterations)
+				for (const auto& threshold : thresholds)
+					for (const auto& tanimoto : tanimotoDistances)
+						for (const auto& confidence : confidences)
+							for (const auto& startNumber : startingHypothesisNumber)
+								for (const auto& addedNumber : addedHypothesisNumber)
+									{
+										settings.resize(settings.size() + 1);
+										auto& item = settings.back();
+										item.minimumInlierNumber = minimum_point_number;
+										item.maximumIterations = maxIters;
+										item.inlierOutlierThreshold = threshold;
+										item.modelDistanceThreshold = tanimoto;
+										item.confidence = confidence;
+										item.startingHypothesisNumber = startNumber;
+										item.addedHypothesisNumber = addedNumber;
+									}
 
-		// Initializing the paths 
-		initializeScene(scene, // The scene's name
-			src_image_path, // The path of the source image
-			dst_image_path, // The path of the destination image
-			input_correspondence_path, // The path of the detected correspondences
-			output_correspondence_path, // The path of the correspondences saved with their labels
-			output_matched_image_path, // The path where the images with the labelings are saved
-			root_directory, // The root directory where the "results" and "data" folder are
-			true); // In this dataset, the correspondences and a reference labeling are provided
+#pragma omp parallel for num_threads(24)
+	for (int settingIdx = 0; settingIdx < settings.size(); ++settingIdx)
+	{
+		for (const std::string& scene : getAvailableTestScenes(Problem::TwoViewMotion))
+		{
+			const size_t minimum_point_number = 15; // The minimum number of inliers needed to accept a model instance, i.e., two times the sample size
+			const double inlier_outlier_threshold = 5.0; // The inlier-outlier threshold used to assign points to models
 
-		testMultiHomographyFitting(
-			scene, // The name of the current scene
-			src_image_path, // The source image's path
-			dst_image_path, // The destination image's path
-			input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
-			output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
-			output_matched_image_path, // The path where the matched image pair will be saved
-			confidence, // The RANSAC confidence value
-			inlier_outlier_threshold, // The used inlier-outlier threshold in GC-RANSAC.
-			spatial_coherence_weight, // The weight of the spatial coherence term in the graph-cut energy minimization.
-			neighborhood_ball_radius, // The radius of the neighborhood ball for determining the neighborhoods.
-			maximum_tanimoto_similarity, // The maximum Tanimoto similarity of the proposal and compound instances.
-			minimum_point_number, // The minimum number of inlier for a model to be kept.
-			visualize_results, // A flag to determine if the results should be visualized
-			visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-			true);  // In this dataset, the correspondences and a reference labeling are provided
+			printf("Processed scene = %s.\n", scene.c_str());
+
+			std::string src_image_path, // Path of the source image
+				dst_image_path, // Path of the destination image
+				input_correspondence_path, // Path where the detected correspondences are saved
+				output_correspondence_path, // Path where the inlier correspondences are saved
+				output_matched_image_path; // Path where the matched image is saved
+
+			// Initializing the paths 
+			initializeScene(scene, // The scene's name
+				src_image_path, // The path of the source image
+				dst_image_path, // The path of the destination image
+				input_correspondence_path, // The path of the detected correspondences
+				output_correspondence_path, // The path of the correspondences saved with their labels
+				output_matched_image_path, // The path where the images with the labelings are saved
+				root_directory, // The root directory where the "results" and "data" folder are
+				true); // In this dataset, the correspondences and a reference labeling are provided
+
+				const auto& currentSettings = settings[settingIdx];
+
+				testMultiTwoViewMotionFitting(
+					scene, // The name of the current scene
+					src_image_path, // The source image's path
+					dst_image_path, // The destination image's path
+					input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+					output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+					output_matched_image_path, // The path where the matched image pair will be saved
+					currentSettings.confidence, // The RANSAC confidence value
+					currentSettings.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+					currentSettings.maximumIterations,
+					currentSettings.startingHypothesisNumber,
+					currentSettings.addedHypothesisNumber,
+					currentSettings.modelDistanceThreshold,
+					currentSettings.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+					visualize_results, // A flag to determine if the results should be visualized
+					visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+					true);  // In this dataset, the correspondences and a reference labeling are provided
+			}
+		}
 	}
 
-	for (const std::string& scene : getAvailableTestScenes(Problem::TwoViewMotion))
+	if constexpr (runTestHomography)
 	{
-		const size_t minimum_point_number = 2 * 7; // The minimum number of inliers needed to accept a model instance, i.e., two times the sample size
-		const double inlier_outlier_threshold = 0.75; // The inlier-outlier threshold used to assign points to models
+		std::vector<progx::MultiModelSettings> settings;
+		const std::vector<double> thresholds = { 3.0, 3.5, 4.0, 5.0, 6.0 };
+		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85 };
+		const std::vector<int> minimumPoints = { 20, 10, 15 };
+		const std::vector<double> confidences = { 0.9, 0.95, 0.99, /*0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
+		const std::vector<int> maximumIterations = { 50, 75, 150, 100, 200 };
+		const std::vector<int> startingHypothesisNumber = { 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		const std::vector<int> addedHypothesisNumber = { 1, 5, 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		int repetitions = 3;
 
-		printf("Processed scene = %s.\n", scene.c_str());
+		for (int rep = 0; rep < repetitions; ++rep)
+			for (const auto& minimum_point_number : minimumPoints)
+				for (const auto& maxIters : maximumIterations)
+					for (const auto& threshold : thresholds)
+						for (const auto& tanimoto : tanimotoDistances)
+							for (const auto& confidence : confidences)
+								for (const auto& startNumber : startingHypothesisNumber)
+									for (const auto& addedNumber : addedHypothesisNumber)
+									{
+										settings.resize(settings.size() + 1);
+										auto& item = settings.back();
+										item.minimumInlierNumber = minimum_point_number;
+										item.maximumIterations = maxIters;
+										item.inlierOutlierThreshold = threshold;
+										item.modelDistanceThreshold = tanimoto;
+										item.confidence = confidence;
+										item.startingHypothesisNumber = startNumber;
+										item.addedHypothesisNumber = addedNumber;
+									}
 
-		std::string src_image_path, // Path of the source image
-			dst_image_path, // Path of the destination image
-			input_correspondence_path, // Path where the detected correspondences are saved
-			output_correspondence_path, // Path where the inlier correspondences are saved
-			output_matched_image_path; // Path where the matched image is saved
+#pragma omp parallel for num_threads(24)
+		for (int settingIdx = 0; settingIdx < settings.size(); ++settingIdx)
+		{
+			for (const std::string& scene : getAvailableTestScenes(Problem::Homography))
+			{
+				printf("Processed scene = %s.\n", scene.c_str());
 
-		// Initializing the paths 
-		initializeScene(scene, // The scene's name
-			src_image_path, // The path of the source image
-			dst_image_path, // The path of the destination image
-			input_correspondence_path, // The path of the detected correspondences
-			output_correspondence_path, // The path of the correspondences saved with their labels
-			output_matched_image_path, // The path where the images with the labelings are saved
-			root_directory, // The root directory where the "results" and "data" folder are
-			true); // In this dataset, the correspondences and a reference labeling are provided
+				std::string src_image_path, // Path of the source image
+					dst_image_path, // Path of the destination image
+					input_correspondence_path, // Path where the detected correspondences are saved
+					output_correspondence_path, // Path where the inlier correspondences are saved
+					output_matched_image_path; // Path where the matched image is saved
 
-		testMultiTwoViewMotionFitting(
-			scene, // The name of the current scene
-			src_image_path, // The source image's path
-			dst_image_path, // The destination image's path
-			input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
-			output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
-			output_matched_image_path, // The path where the matched image pair will be saved
-			confidence, // The RANSAC confidence value
-			inlier_outlier_threshold, // The used inlier-outlier threshold in GC-RANSAC.
-			spatial_coherence_weight, // The weight of the spatial coherence term in the graph-cut energy minimization.
-			neighborhood_ball_radius, // The radius of the neighborhood ball for determining the neighborhoods.
-			maximum_tanimoto_similarity, // The maximum Tanimoto similarity of the proposal and compound instances.
-			minimum_point_number, // The minimum number of inlier for a model to be kept.
-			visualize_results, // A flag to determine if the results should be visualized
-			visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-			true);  // In this dataset, the correspondences and a reference labeling are provided
+				// Initializing the paths 
+				initializeScene(scene, // The scene's name
+					src_image_path, // The path of the source image
+					dst_image_path, // The path of the destination image
+					input_correspondence_path, // The path of the detected correspondences
+					output_correspondence_path, // The path of the correspondences saved with their labels
+					output_matched_image_path, // The path where the images with the labelings are saved
+					root_directory, // The root directory where the "results" and "data" folder are
+					true); // In this dataset, the correspondences and a reference labeling are provided
+
+				const auto& currentSettings = settings[settingIdx];
+
+				testMultiHomographyFitting(
+					scene, // The name of the current scene
+					src_image_path, // The source image's path
+					dst_image_path, // The destination image's path
+					input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+					output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+					output_matched_image_path, // The path where the matched image pair will be saved
+					currentSettings.confidence, // The RANSAC confidence value
+					currentSettings.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+					currentSettings.maximumIterations,
+					currentSettings.startingHypothesisNumber,
+					currentSettings.addedHypothesisNumber,
+					currentSettings.modelDistanceThreshold,
+					currentSettings.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+					visualize_results, // A flag to determine if the results should be visualized
+					visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+					true);  // In this dataset, the correspondences and a reference labeling are provided
+			}
+		}
 	}
-	*/
+	
 	return 0;
 }
 
@@ -237,17 +381,33 @@ std::vector<std::string> getAvailableTestScenes(const Problem& problem_)
 	switch (problem_)
 	{
 	case Problem::Homography:
+		/*, "boxesandbooks"*/ /*"glasscasea", "glasscaseb",*/  /*, "stairs"*/
 		// Scenes from the AdelaideRMF H dataset. Correspondences are obtained by the EPOS method.
-		return { "unionhouse", "oldclassicswing", "unihouse" };
+		return { "oldclassicswing", "unihouse", "unionhouse", "barrsmith", 
+		 "bonhall", "bonython", "elderhalla",
+		 "elderhallb", "johnssona",
+		 "ladysymon", "library", "napiera",
+		 "napierb", "neem", "nese", "oldclassicswing",
+		 "physics", "sene", "johnssonb" };
 	case Problem::TwoViewMotion:
 		// Scenes from the AdelaideRMF F dataset. Correspondences are obtained by the EPOS method.
-		return { "book", "breadcube", "cubetoy" };
+		return { "biscuitbookbox", "breadcartoychips", "breadcubechips", "breadtoycar",
+			"carchipscube", "cubebreadtoychips", "dinobooks", "toycubecar",
+			"biscuit", "book", "breadcube", "breadtoy",
+			"cube", "cubetoy", "game", "gamebiscuit",
+			"cubechips", "boardgame" };
 	case Problem::Pose6D:
 		// A scene from the T-LESS dataset. Correspondences are obtained by the EPOS method.
 		return { "tless" };
 	case Problem::RigidMotion:
-		LOG(WARNING) << "Multi-motion fitting is not implemented yet. Coming soon...";
-		return {};
+		return { "cars1", "cars10_g12", "cars10_g13", "cars10_g23",
+			"cars2", "cars2B_g12", "cars2B_g13", "cars2B_g23",
+			"cars2_06_g12", "cars2_06_g13", "cars2_06_g23", "cars2_07_g12",
+			"cars2_07_g13", "cars2_07_g23", "cars3_g12", "cars3_g13",
+			"cars3_g23", "cars4", "cars5_g12", "cars5_g13",
+			"cars5_g23", "cars6", "cars7", "cars8",
+			"cars9_g12", "cars9_g13", "cars9_g23", "truck1",
+			"truck2", "kanatani1", "kanatani2" };
 	default:
 		return {};
 	}
@@ -273,7 +433,7 @@ bool initializeScene(const std::string& scene_name_, // The scene's name
 		src_image_path_ = root_directory_ + "data/" + scene_name_ + "/" + scene_name_ + "1.png";
 	if (cv::imread(src_image_path_).empty())
 	{
-		LOG(FATAL) << "Error while loading source image \"" <<
+		std::cerr << "Error while loading source image \"" <<
 			src_image_path_ << "\"";
 		return false;
 	}
@@ -285,7 +445,7 @@ bool initializeScene(const std::string& scene_name_, // The scene's name
 		dst_image_path_ = root_directory_ + "data/" + scene_name_ + "/" + scene_name_ + "2.png";
 	if (cv::imread(dst_image_path_).empty())
 	{
-		LOG(FATAL) << "Error while loading destination image \"" <<
+		std::cerr << "Error while loading destination image \"" <<
 			dst_image_path_ << "\"";
 		return false;
 	}
@@ -449,6 +609,200 @@ double rotationError(const Eigen::Matrix3d& reference_rotation_,
 	return radian_to_degree_multiplier * std::acos(error_cos);
 }
 
+void testMultiMotionFitting(
+	const std::string& scene_name_, // The name of the current scene 
+	const std::string& video_path_, // The path of the source image
+	const std::string& input_correspondence_path_, // The path of the detected correspondences
+	const std::string& output_correspondence_path_,  // The path of the correspondences saved with their labels
+	const double confidence_, // The RANSAC confidence value
+	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
+	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
+	const size_t starting_hypothesis_number_,
+	const size_t added_hypothesis_number_,
+	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
+	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
+	const bool visualize_results_, // A flag to determine if the results should be visualized
+	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
+	const bool has_detected_correspondences_)
+{
+	static std::mutex saving_mutex;
+
+	// Read the images
+	//cv::Mat source_image = cv::imread(source_path_); // The source image
+	//cv::Mat destination_image = cv::imread(destination_path_); // The destination image
+
+	// Read point tracks
+	cv::Mat originalPoints, points;
+	std::vector<int> reference_labeling;
+	int frames = 0;
+	int gt_model_number = 0;
+	readAnnotatedPointSequence(input_correspondence_path_, frames, originalPoints, reference_labeling);
+	projectDataToRDimensionalSpace(originalPoints, points, 5);
+	points = points.t();
+
+	size_t reference_model_number = 0;
+	for (const auto& label : reference_labeling)
+		reference_model_number = MAX(reference_model_number, label);
+
+
+	if (true) {
+		// The main sampler is used inside the local optimization
+		std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		gcransac::sampler::UniformSampler sampler(&points); 
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
+		printf("Uniform sampler initialization time = %f secs.\n", elapsed_seconds.count());
+
+		// Applying Progressive-X
+		typedef progx::ProgressiveXPrime<
+			clustering::density::DBScanClustering<
+			progx::ModelData,
+			clustering::distances::TanimotoDistance<progx::ModelData>>,
+			clustering::distances::TanimotoDistance<progx::ModelData>,
+			clustering::losses::MAGSACLoss<double, gcransac::utils::DefaultLinearSubspaceEstimator>,
+			gcransac::utils::DefaultLinearSubspaceEstimator,
+			gcransac::sampler::UniformSampler> ProgXPrime;
+
+		ProgXPrime progressiveXPrime;
+
+		auto& settings = progressiveXPrime.getMutableSettings();
+		settings.inlierOutlierThreshold = inlier_outlier_threshold_;
+		settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
+		settings.maximumIterations = maximum_iterations;
+		settings.minimumInlierNumber = minimum_point_number_;
+		settings.startingHypothesisNumber = starting_hypothesis_number_;
+		settings.addedHypothesisNumber = added_hypothesis_number_;
+		settings.confidence = confidence_;
+
+		std::vector<gcransac::Model> models;
+		std::vector<progx::ModelData> modelData;
+
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		progressiveXPrime.run(
+			points,
+			sampler,
+			models,
+			modelData);
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		elapsed_seconds = end - start; // The elapsed time in seconds
+		double time = elapsed_seconds.count();
+
+		gcransac::utils::DefaultLinearSubspaceEstimator estimator;
+		for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
+		{
+			size_t inlierNums = 0;
+			for (size_t pointIdx = 0; pointIdx < points.rows; ++pointIdx)
+			{
+				const double distance =
+					estimator.squaredResidual(
+						points.row(pointIdx),
+						models[modelIdx]);
+
+				if (distance < inlier_outlier_threshold_ * inlier_outlier_threshold_)
+				{
+					++inlierNums;
+				}
+			}
+
+			std::cout << "Inliers = " << inlierNums << std::endl;
+		}
+
+		// Calculate the misclassification error if a reference labeling is known
+		double misclassification_error1 = getMisclassificationError<gcransac::utils::DefaultLinearSubspaceEstimator>(
+			modelData,
+			reference_labeling,
+			modelData.size(),
+			reference_model_number);
+
+		// Get a labeling
+		for (double spatialWeight = 0.0; spatialWeight <= 1.0; spatialWeight += 0.1)
+			for (double labelCost = 0.0; labelCost <= 30.0; labelCost += 5)
+			{
+				std::vector<size_t> labels;
+				std::vector<int> intLabels;
+				size_t max_label;
+				getLabeling<gcransac::utils::DefaultLinearSubspaceEstimator>(
+					points,
+					models,
+					0.01,
+					inlier_outlier_threshold_,
+					spatialWeight,
+					labelCost,
+					labels,
+					max_label);
+				intLabels.resize(labels.size());
+
+				std::vector<cv::Scalar> colors(max_label + 1);
+				for (auto& color : colors)
+					color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
+
+				for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
+				{
+					intLabels[pointIdx] = labels[pointIdx];
+					if (intLabels[pointIdx] == max_label)
+						intLabels[pointIdx] = -1;
+
+					/*cv::circle(source_image,
+						cv::Point(points.at<double>(pointIdx, 0), points.at<double>(pointIdx, 1)),
+						3,
+						colors[labels[pointIdx]],
+						-1);
+
+					cv::circle(destination_image,
+						cv::Point(points.at<double>(pointIdx, 2), points.at<double>(pointIdx, 3)),
+						3,
+						colors[labels[pointIdx]],
+						-1);*/
+				}
+
+				double misclassification_error2 = getMisclassificationError(
+					intLabels,
+					reference_labeling,
+					max_label,
+					reference_model_number);
+
+				double ME = (misclassification_error1 == -1 || misclassification_error2 == -1 ?
+					MAX(misclassification_error1, misclassification_error2) :
+					MIN(misclassification_error1, misclassification_error2));
+
+				printf("Processing time = %f secs.\n", time);
+				printf("Misclassification error <= (%f, %f)\%.\n", misclassification_error1, misclassification_error2);
+				printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
+
+				saving_mutex.lock();
+				std::ofstream file("tuningM.csv", std::fstream::app);
+				file << scene_name_ << ";"
+					<< "tanimoto" << ";"
+					<< "magsac" << ";"
+					<< "dbscan" << ";"
+					<< spatialWeight << ";"
+					<< labelCost << ";"
+					<< confidence_ << ";"
+					<< starting_hypothesis_number_ << ";"
+					<< added_hypothesis_number_ << ";"
+					<< minimum_point_number_ << ";"
+					<< maximum_iterations << ";"
+					<< inlier_outlier_threshold_ << ";"
+					<< maximum_tanimoto_similarity_ << ";"
+					<< minimum_point_number_ << ";"
+					<< time << ";"
+					<< ME << ";"
+					<< (int)modelData.size() - (int)reference_model_number << "\n";
+				file.close();
+				saving_mutex.unlock();
+			}
+
+		/*cv::namedWindow("Image 1", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::namedWindow("Image 2", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::resizeWindow("Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
+		cv::resizeWindow("Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
+		cv::imshow("Image 1", source_image);
+		cv::imshow("Image 2", destination_image);
+		cv::waitKey(0);*/
+	}
+}
+
 void testMultiTwoViewMotionFitting(
 	const std::string& scene_name_, // The name of the current scene 
 	const std::string& source_path_, // The path of the source image
@@ -458,35 +812,38 @@ void testMultiTwoViewMotionFitting(
 	const std::string& output_match_image_path_, // The path where the images with the labelings are saved
 	const double confidence_, // The RANSAC confidence value
 	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
-	const double spatial_coherence_weight_, // The weight of the spatial coherence term in the graph-cut energy minimization.
-	const double neighborhood_ball_radius_, // The radius of the neighborhood ball for determining the neighborhoods.
+	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
+	const size_t starting_hypothesis_number_,
+	const size_t added_hypothesis_number_,
 	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
-	const size_t minimum_point_number_, // The minimum number of inlier for a model to be kept.
+	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
 	const bool visualize_results_, // A flag to determine if the results should be visualized
 	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
 	const bool has_detected_correspondences_)
 {
+	static std::mutex saving_mutex;
+
 	// Read the images
-	/*cv::Mat source_image = cv::imread(source_path_); // The source image
+	cv::Mat source_image = cv::imread(source_path_); // The source image
 	cv::Mat destination_image = cv::imread(destination_path_); // The destination image
 
 	if (source_image.empty()) // Check if the source image is loaded successfully
 	{
-		LOG(FATAL) <<
-			"An error occured while loading image \"" << source_path_ << "\"";
+		std::cerr <<
+			"An error occured while loading image \"" << source_path_ << "\"" << std::endl;
 		return;
 	}
 
 	if (destination_image.empty()) // Check if the destination image is loaded successfully
 	{
-		LOG(FATAL) <<
-			"An error occured while loading image \"" << destination_path_ << "\"";
+		std::cerr <<
+			"An error occured while loading image \"" << destination_path_ << "\"" << std::endl;
 		return;
 	}
 
 	// Detect or load point correspondences using AKAZE 
 	cv::Mat points;
-	std::vector<size_t> reference_labeling;
+	std::vector<int> reference_labeling;
 	size_t reference_model_number = 0;
 	if (has_detected_correspondences_)
 		loadPointsWithLabels(points,
@@ -500,97 +857,345 @@ void testMultiTwoViewMotionFitting(
 			destination_image, // The destination image
 			points); // The detected point correspondences. Each row is of format "x1 y1 x2 y2"
 
-	// Initialize the neighborhood used in Graph-cut RANSAC and, perhaps,
-	// in the sampler if NAPSAC or Progressive-NAPSAC sampling is applied.
-	std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
-	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
-	gcransac::neighborhood::FlannNeighborhoodGraph neighborhood(&points, // All data points
-		neighborhood_ball_radius_); // The radius of the neighborhood ball for determining the neighborhoods.
-	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
-	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
+	if (true) {
+		// The main sampler is used inside the local optimization
+		std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		gcransac::sampler::ProgressiveNapsacSampler sampler(&points, // All data points
+			{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
+			gcransac::utils::DefaultFundamentalMatrixEstimator::sampleSize(), // The size of a minimal sample
+			source_image.cols, // The width of the source image
+			source_image.rows, // The height of the source image
+			destination_image.cols, // The width of the destination image
+			destination_image.rows); // The height of the destination image
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
+		printf("P-NAPSAC initialization time = %f secs.\n", elapsed_seconds.count());
 
-	printf("Neighborhood calculation time = %f secs.\n", elapsed_seconds.count());
+		// Applying Progressive-X
+		typedef progx::ProgressiveXPrime<
+			clustering::density::MeanShiftClustering<
+			progx::ModelData,
+			clustering::distances::TanimotoDistance<progx::ModelData>>,
+			clustering::distances::TanimotoDistance<progx::ModelData>,
+			clustering::losses::MAGSACLoss<double, gcransac::utils::DefaultFundamentalMatrixEstimator>,
+			gcransac::utils::DefaultFundamentalMatrixEstimator,
+			gcransac::sampler::ProgressiveNapsacSampler> ProgXPrime;
 
-	// Calculating the maximal diagonal size of the images.
-	// This value will be then used to determine a threshold adaptively,
-	// based on the image size.
-	const double max_diagonal_length =
-		sqrt(pow(MAX(source_image.cols, destination_image.cols), 2) +
-			pow(MAX(source_image.rows, destination_image.rows), 2));
+		ProgXPrime progressiveXPrime;
 
-	// The main sampler is used inside the local optimization
-	gcransac::sampler::ProgressiveNapsacSampler main_sampler(&points, // All data points
-		{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
-		gcransac::utils::DefaultFundamentalMatrixEstimator::sampleSize(), // The size of a minimal sample
-		source_image.cols, // The width of the source image
-		source_image.rows, // The height of the source image
-		destination_image.cols, // The width of the destination image
-		destination_image.rows); // The height of the destination image
+		auto& settings = progressiveXPrime.getMutableSettings();
+		settings.inlierOutlierThreshold = inlier_outlier_threshold_;
+		settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
+		settings.maximumIterations = maximum_iterations;
+		settings.minimumInlierNumber = minimum_point_number_;
+		settings.startingHypothesisNumber = starting_hypothesis_number_;
+		settings.addedHypothesisNumber = added_hypothesis_number_;
+		settings.confidence = confidence_;
 
-	// The local optimization sampler is used inside the local optimization
-	gcransac::sampler::UniformSampler local_optimization_sampler(&points);
+		/*progressiveXPrime.image1 =
+			source_image;
+		progressiveXPrime.image2 =
+			destination_image;*/
 
-	// Initializing the multi-homography visualizer which will show
-	// the results of each step of Progressive-X.
-	progx::MultiHomographyVisualizer visualizer(&points, // All data points
-		&source_image, // A pointer to the source image
-		&destination_image, // A pointer to the destination image
-		0.005 * max_diagonal_length); // The radius of the drawn circles
+		std::vector<gcransac::Model> models;
+		std::vector<progx::ModelData> modelData;
 
-	// Applying Progressive-X
-	progx::ProgressiveX<gcransac::neighborhood::FlannNeighborhoodGraph, // The type of the used neighborhood-graph
-		gcransac::utils::DefaultFundamentalMatrixEstimator, // The type of the used model estimator
-		gcransac::sampler::ProgressiveNapsacSampler, // The type of the used main sampler in GC-RANSAC
-		gcransac::sampler::UniformSampler> // The type of the used sampler in the local optimization of GC-RANSAC
-		progressive_x(
-			// If the results should be visualized pass the point of the visualizer.
-			// Otherwise, set it to a null pointer.
-			visualize_inner_steps_ ?
-			&visualizer :
-			nullptr);
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		progressiveXPrime.run(
+			points,
+			sampler,
+			models,
+			modelData);
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		elapsed_seconds = end - start; // The elapsed time in seconds
+		double time = elapsed_seconds.count();
 
-	// Set the parameters of Progressive-X
-	progx::MultiModelSettings& settings = progressive_x.getMutableSettings();
-	// The minimum number of inlier required to keep a model instance.
-	// This value is used to determine the label cost weight in the alpha-expansion of PEARL.
-	settings.minimum_number_of_inliers = minimum_point_number_;
-	// The inlier-outlier threshold
-	settings.inlier_outlier_threshold = inlier_outlier_threshold_;
-	// The required confidence in the results
-	settings.confidence = confidence_;
-	// The maximum Tanimoto similarity of the proposal and compound instances
-	settings.maximum_tanimoto_similarity = maximum_tanimoto_similarity_;
-	// The weight of the spatial coherence term
-	settings.spatial_coherence_weight = spatial_coherence_weight_;
+		gcransac::utils::DefaultFundamentalMatrixEstimator estimator;
+		for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
+		{
+			size_t inlierNums = 0;
+			for (size_t pointIdx = 0; pointIdx < points.rows; ++pointIdx)
+			{
+				const double distance =
+					estimator.squaredResidual(
+						points.row(pointIdx),
+						models[modelIdx]);
 
-	progressive_x.run(points, // All data points
-		neighborhood, // The neighborhood graph
-		main_sampler, // The main sampler used in GC-RANSAC
-		local_optimization_sampler); // The sampler used in the local optimization of GC-RANSAC
+				if (distance < inlier_outlier_threshold_ * inlier_outlier_threshold_)
+				{
+					++inlierNums;
+				}
+			}
 
-	// Calculate the misclassification error if a reference labeling is known
-	double misclassification_error = getMisclassificationError(
-		progressive_x.getModels(),
-		reference_labeling,
-		progressive_x.getModelNumber(),
-		reference_model_number);
+			std::cout << "Inliers = " << inlierNums << std::endl;
+		}
 
-	printf("Processing time = %f secs.\n", progressive_x.getStatistics().processing_time);
-	printf("Misclassification error <= %f\%.\n", misclassification_error);
-	printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", progressive_x.getModelNumber(), reference_model_number);
+		// Calculate the misclassification error if a reference labeling is known
+		double misclassification_error1 = getMisclassificationError<gcransac::utils::DefaultFundamentalMatrixEstimator>(
+			modelData,
+			reference_labeling,
+			modelData.size(),
+			reference_model_number);
 
-	// Visualize the final results if needed
-	if (visualize_results_)
-	{
-		// If the visualizer has not been initialize, initialize it.
-		if (!visualize_inner_steps_)
-			visualizer.setLabeling(&progressive_x.getStatistics().labeling, // The obtained labeling
-				progressive_x.getModelNumber() + 1); // The number of labels
-		visualizer.visualize(0, // If the delay is 0, it will wait for key press.
-			"Resulting labeling"); // The name of the window
+		// Get a labeling
+		for (double spatialWeight = 0.0; spatialWeight <= 1.0; spatialWeight += 0.1)
+			for (double labelCost = 0.0; labelCost <= 30.0; labelCost += 5)
+			{
+				std::vector<size_t> labels;
+				std::vector<int> intLabels;
+				size_t max_label;
+				getLabeling<gcransac::utils::DefaultFundamentalMatrixEstimator>(
+					points,
+					models,
+					20.0,
+					inlier_outlier_threshold_,
+					spatialWeight,
+					labelCost,
+					labels,
+					max_label);
+				intLabels.resize(labels.size());
+
+				std::vector<cv::Scalar> colors(max_label + 1);
+				for (auto& color : colors)
+					color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
+
+				for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
+				{
+					intLabels[pointIdx] = labels[pointIdx];
+					if (intLabels[pointIdx] == max_label)
+						intLabels[pointIdx] = -1;
+
+					/*cv::circle(source_image,
+						cv::Point(points.at<double>(pointIdx, 0), points.at<double>(pointIdx, 1)),
+						3,
+						colors[labels[pointIdx]],
+						-1);
+
+					cv::circle(destination_image,
+						cv::Point(points.at<double>(pointIdx, 2), points.at<double>(pointIdx, 3)),
+						3,
+						colors[labels[pointIdx]],
+						-1);*/
+				}
+
+				double misclassification_error2 = getMisclassificationError(
+					intLabels,
+					reference_labeling,
+					max_label,
+					reference_model_number);
+
+				double ME = (misclassification_error1 == -1 || misclassification_error2 == -1 ?
+					MAX(misclassification_error1, misclassification_error2) :
+					MIN(misclassification_error1, misclassification_error2));
+
+				printf("Processing time = %f secs.\n", time);
+				printf("Misclassification error <= (%f, %f)\%.\n", misclassification_error1, misclassification_error2);
+				printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
+
+				saving_mutex.lock();
+				std::ofstream file("tuningF.csv", std::fstream::app);
+				file << scene_name_ << ";"
+					<< "tanimoto" << ";"
+					<< "magsac" << ";"
+					<< "mean-shift" << ";"
+					<< spatialWeight << ";"
+					<< labelCost << ";"
+					<< confidence_ << ";"
+					<< starting_hypothesis_number_ << ";"
+					<< added_hypothesis_number_ << ";"
+					<< minimum_point_number_ << ";"
+					<< maximum_iterations << ";"
+					<< inlier_outlier_threshold_ << ";"
+					<< maximum_tanimoto_similarity_ << ";"
+					<< minimum_point_number_ << ";"
+					<< time << ";"
+					<< ME << ";"
+					<< (int)modelData.size() - (int)reference_model_number << "\n";
+				file.close();
+				saving_mutex.unlock();
+			}
+
+		/*cv::namedWindow("Image 1", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::namedWindow("Image 2", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::resizeWindow("Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
+		cv::resizeWindow("Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
+		cv::imshow("Image 1", source_image);
+		cv::imshow("Image 2", destination_image);
+		cv::waitKey(0);*/
 	}
-	visualizer.release();
-	printf("\n");*/
+
+	if (true) {
+		// The main sampler is used inside the local optimization
+		std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		gcransac::sampler::ProgressiveNapsacSampler sampler(&points, // All data points
+			{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
+			gcransac::utils::DefaultFundamentalMatrixEstimator::sampleSize(), // The size of a minimal sample
+			source_image.cols, // The width of the source image
+			source_image.rows, // The height of the source image
+			destination_image.cols, // The width of the destination image
+			destination_image.rows); // The height of the destination image
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
+		printf("P-NAPSAC initialization time = %f secs.\n", elapsed_seconds.count());
+
+		// Applying Progressive-X
+		typedef progx::ProgressiveXPrime<
+			clustering::density::DBScanClustering<
+			progx::ModelData,
+			clustering::distances::TanimotoDistance<progx::ModelData>>,
+			clustering::distances::TanimotoDistance<progx::ModelData>,
+			clustering::losses::MAGSACLoss<double, gcransac::utils::DefaultFundamentalMatrixEstimator>,
+			gcransac::utils::DefaultFundamentalMatrixEstimator,
+			gcransac::sampler::ProgressiveNapsacSampler> ProgXPrime;
+
+		ProgXPrime progressiveXPrime;
+
+		auto& settings = progressiveXPrime.getMutableSettings();
+		settings.inlierOutlierThreshold = inlier_outlier_threshold_;
+		settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
+		settings.maximumIterations = maximum_iterations;
+		settings.minimumInlierNumber = minimum_point_number_;
+		settings.startingHypothesisNumber = starting_hypothesis_number_;
+		settings.addedHypothesisNumber = added_hypothesis_number_;
+		settings.confidence = confidence_;
+
+		progressiveXPrime.image1 =
+			source_image;
+		progressiveXPrime.image2 =
+			destination_image;
+
+		std::vector<gcransac::Model> models;
+		std::vector<progx::ModelData> modelData;
+
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		progressiveXPrime.run(
+			points,
+			sampler,
+			models,
+			modelData);
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		elapsed_seconds = end - start; // The elapsed time in seconds
+		double time = elapsed_seconds.count();
+
+		gcransac::utils::DefaultFundamentalMatrixEstimator estimator;
+		for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
+		{
+			size_t inlierNums = 0;
+			for (size_t pointIdx = 0; pointIdx < points.rows; ++pointIdx)
+			{
+				const double distance =
+					estimator.squaredResidual(
+						points.row(pointIdx),
+						models[modelIdx]);
+
+				if (distance < inlier_outlier_threshold_ * inlier_outlier_threshold_)
+				{
+					++inlierNums;
+				}
+			}
+
+			std::cout << "Inliers = " << inlierNums << std::endl;
+		}
+
+		// Calculate the misclassification error if a reference labeling is known
+		double misclassification_error1 = getMisclassificationError<gcransac::utils::DefaultFundamentalMatrixEstimator>(
+			modelData,
+			reference_labeling,
+			modelData.size(),
+			reference_model_number);
+
+		// Get a labeling
+		for (double spatialWeight = 0.0; spatialWeight <= 1.0; spatialWeight += 0.1)
+			for (double labelCost = 0.0; labelCost <= 30.0; labelCost += 5)
+			{
+				std::vector<size_t> labels;
+				std::vector<int> intLabels;
+				size_t max_label;
+				getLabeling<gcransac::utils::DefaultFundamentalMatrixEstimator>(
+					points,
+					models,
+					20.0,
+					inlier_outlier_threshold_,
+					spatialWeight,
+					labelCost,
+					labels,
+					max_label);
+				intLabels.resize(labels.size());
+
+				std::vector<cv::Scalar> colors(max_label + 1);
+				for (auto& color : colors)
+					color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
+
+				for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
+				{
+					intLabels[pointIdx] = labels[pointIdx];
+					if (intLabels[pointIdx] == max_label)
+						intLabels[pointIdx] = -1;
+
+					/*cv::circle(source_image,
+						cv::Point(points.at<double>(pointIdx, 0), points.at<double>(pointIdx, 1)),
+						3,
+						colors[labels[pointIdx]],
+						-1);
+
+					cv::circle(destination_image,
+						cv::Point(points.at<double>(pointIdx, 2), points.at<double>(pointIdx, 3)),
+						3,
+						colors[labels[pointIdx]],
+						-1);*/
+				}
+
+				// Calculate the misclassification error if a reference labeling is known
+
+				double misclassification_error2 = getMisclassificationError(
+					intLabels,
+					reference_labeling,
+					max_label,
+					reference_model_number);
+
+				double ME = (misclassification_error1 == -1 || misclassification_error2 == -1 ?
+					MAX(misclassification_error1, misclassification_error2) :
+					MIN(misclassification_error1, misclassification_error2));
+
+				printf("Processing time = %f secs.\n", time);
+				printf("Misclassification error <= (%f, %f)\%.\n", misclassification_error1, misclassification_error2);
+				printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
+
+				saving_mutex.lock();
+				std::ofstream file("tuningF.csv", std::fstream::app);
+				file << scene_name_ << ";"
+					<< "tanimoto" << ";"
+					<< "magsac" << ";"
+					<< "dbscan" << ";"
+					<< spatialWeight << ";"
+					<< labelCost << ";"
+					<< confidence_ << ";"
+					<< starting_hypothesis_number_ << ";"
+					<< added_hypothesis_number_ << ";"
+					<< minimum_point_number_ << ";"
+					<< maximum_iterations << ";"
+					<< inlier_outlier_threshold_ << ";"
+					<< maximum_tanimoto_similarity_ << ";"
+					<< minimum_point_number_ << ";"
+					<< time << ";"
+					<< ME << ";"
+					<< (int)modelData.size() - (int)reference_model_number << "\n";
+				file.close();
+				saving_mutex.unlock();
+			}
+		/*cv::namedWindow("Image 1", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::namedWindow("Image 2", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::resizeWindow("Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
+		cv::resizeWindow("Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
+		cv::imshow("Image 1", source_image);
+		cv::imshow("Image 2", destination_image);
+		cv::waitKey(0);*/
+	}
+
+	source_image.release();
+	destination_image.release();
 }
 
 
@@ -603,35 +1208,38 @@ void testMultiHomographyFitting(
 	const std::string& output_match_image_path_, // The path where the images with the labelings are saved
 	const double confidence_, // The RANSAC confidence value
 	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
-	const double spatial_coherence_weight_, // The weight of the spatial coherence term in the graph-cut energy minimization.
-	const double neighborhood_ball_radius_, // The radius of the neighborhood ball for determining the neighborhoods.
+	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
+	const size_t starting_hypothesis_number_,
+	const size_t added_hypothesis_number_,
 	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
-	const size_t minimum_point_number_, // The minimum number of inlier for a model to be kept.
+	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
 	const bool visualize_results_, // A flag to determine if the results should be visualized
 	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
 	const bool has_detected_correspondences_)
 {
+	static std::mutex saving_mutex;
+
 	// Read the images
-	/*cv::Mat source_image = cv::imread(source_path_); // The source image
+	cv::Mat source_image = cv::imread(source_path_); // The source image
 	cv::Mat destination_image = cv::imread(destination_path_); // The destination image
 
 	if (source_image.empty()) // Check if the source image is loaded successfully
 	{
-		LOG(FATAL) <<
-			"An error occured while loading image \"" << source_path_ << "\"";
+		std::cerr <<
+			"An error occured while loading image \"" << source_path_ << "\"" << std::endl;
 		return;
 	}
 
 	if (destination_image.empty()) // Check if the destination image is loaded successfully
 	{
-		LOG(FATAL) <<
-			"An error occured while loading image \"" << destination_path_ << "\"";
+		std::cerr <<
+			"An error occured while loading image \"" << destination_path_ << "\"" << std::endl;
 		return;
 	}
 
 	// Detect or load point correspondences using AKAZE 
 	cv::Mat points;
-	std::vector<size_t> reference_labeling;
+	std::vector<int> reference_labeling;
 	size_t reference_model_number = 0;
 	if (has_detected_correspondences_)
 		loadPointsWithLabels(points,
@@ -645,97 +1253,159 @@ void testMultiHomographyFitting(
 			destination_image, // The destination image
 			points); // The detected point correspondences. Each row is of format "x1 y1 x2 y2"
 
-	// Initialize the neighborhood used in Graph-cut RANSAC and, perhaps,
-	// in the sampler if NAPSAC or Progressive-NAPSAC sampling is applied.
+	// The main sampler is used inside the local optimization
 	std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
-	gcransac::neighborhood::FlannNeighborhoodGraph neighborhood(&points, // All data points
-		neighborhood_ball_radius_); // The radius of the neighborhood ball for determining the neighborhoods.
-	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
-	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
-
-	printf("Neighborhood calculation time = %f secs.\n", elapsed_seconds.count());
-
-	// Calculating the maximal diagonal size of the images.
-	// This value will be then used to determine a threshold adaptively,
-	// based on the image size.
-	const double max_diagonal_length =
-		sqrt(pow(MAX(source_image.cols, destination_image.cols), 2) +
-			pow(MAX(source_image.rows, destination_image.rows), 2));
-
-	// The main sampler is used inside the local optimization
-	gcransac::sampler::ProgressiveNapsacSampler main_sampler(&points, // All data points
+	gcransac::sampler::ProgressiveNapsacSampler sampler(&points, // All data points
 		{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
 		gcransac::utils::DefaultHomographyEstimator::sampleSize(), // The size of a minimal sample
 		source_image.cols, // The width of the source image
 		source_image.rows, // The height of the source image
 		destination_image.cols, // The width of the destination image
 		destination_image.rows); // The height of the destination image
-
-	// The local optimization sampler is used inside the local optimization
-	gcransac::sampler::UniformSampler local_optimization_sampler(&points);
-
-	// Initializing the multi-homography visualizer which will show
-	// the results of each step of Progressive-X.
-	progx::MultiHomographyVisualizer visualizer(&points, // All data points
-		&source_image, // A pointer to the source image
-		&destination_image, // A pointer to the destination image
-		0.005 * max_diagonal_length); // The radius of the drawn circles
+	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
+	printf("P-NAPSAC initialization time = %f secs.\n", elapsed_seconds.count());
 
 	// Applying Progressive-X
-	progx::ProgressiveX<gcransac::neighborhood::FlannNeighborhoodGraph, // The type of the used neighborhood-graph
-		gcransac::utils::DefaultHomographyEstimator, // The type of the used model estimator
-		gcransac::sampler::ProgressiveNapsacSampler, // The type of the used main sampler in GC-RANSAC
-		gcransac::sampler::UniformSampler> // The type of the used sampler in the local optimization of GC-RANSAC
-		progressive_x(
-			// If the results should be visualized pass the point of the visualizer.
-			// Otherwise, set it to a null pointer.
-			visualize_inner_steps_ ?
-			&visualizer :
-			nullptr);
+	typedef progx::ProgressiveXPrime<
+		ClusteringMethod,
+		clustering::distances::TanimotoDistance<progx::ModelData>,
+		clustering::losses::MAGSACLoss<double, gcransac::utils::DefaultHomographyEstimator>,
+		gcransac::utils::DefaultHomographyEstimator,
+		gcransac::sampler::ProgressiveNapsacSampler> ProgXPrime;
 
-	// Set the parameters of Progressive-X
-	progx::MultiModelSettings& settings = progressive_x.getMutableSettings();
-	// The minimum number of inlier required to keep a model instance.
-	// This value is used to determine the label cost weight in the alpha-expansion of PEARL.
-	settings.minimum_number_of_inliers = minimum_point_number_;
-	// The inlier-outlier threshold
-	settings.inlier_outlier_threshold = inlier_outlier_threshold_;
-	// The required confidence in the results
+	ProgXPrime progressiveXPrime;
+
+	auto& settings = progressiveXPrime.getMutableSettings();
+	settings.inlierOutlierThreshold = inlier_outlier_threshold_;
+	settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
+	settings.maximumIterations = maximum_iterations;
+	settings.minimumInlierNumber = minimum_point_number_;
+	settings.startingHypothesisNumber = starting_hypothesis_number_;
+	settings.addedHypothesisNumber = added_hypothesis_number_;
 	settings.confidence = confidence_;
-	// The maximum Tanimoto similarity of the proposal and compound instances
-	settings.maximum_tanimoto_similarity = maximum_tanimoto_similarity_;
-	// The weight of the spatial coherence term
-	settings.spatial_coherence_weight = spatial_coherence_weight_;
 
-	progressive_x.run(points, // All data points
-		neighborhood, // The neighborhood graph
-		main_sampler, // The main sampler used in GC-RANSAC
-		local_optimization_sampler); // The sampler used in the local optimization of GC-RANSAC
+	progressiveXPrime.image1 =
+		source_image;
+	progressiveXPrime.image2 =
+		destination_image;
+
+	std::vector<gcransac::Model> models;
+	std::vector<progx::ModelData> modelData;
+
+	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+	progressiveXPrime.run(
+		points,
+		sampler,
+		models,
+		modelData);
+	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+	elapsed_seconds = end - start; // The elapsed time in seconds
+	double time = elapsed_seconds.count();
+
+	gcransac::utils::DefaultHomographyEstimator estimator;
+	for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
+	{
+		size_t inlierNums = 0;
+		for (size_t pointIdx = 0; pointIdx < points.rows; ++pointIdx)
+		{
+			const double distance =
+				estimator.squaredResidual(
+					points.row(pointIdx),
+					models[modelIdx]);
+
+			if (distance < inlier_outlier_threshold_ * inlier_outlier_threshold_)
+			{
+				++inlierNums;
+			}
+		}
+
+		std::cout << "Inliers = " << inlierNums << std::endl;
+	}
 
 	// Calculate the misclassification error if a reference labeling is known
-	double misclassification_error = getMisclassificationError(
-		progressive_x.getModels(),
+	double misclassification_error1 = getMisclassificationError<gcransac::utils::DefaultHomographyEstimator>(
+		modelData,
 		reference_labeling,
-		progressive_x.getModelNumber(),
+		modelData.size(),
 		reference_model_number);
 
-	printf("Processing time = %f secs.\n", progressive_x.getStatistics().processing_time);
-	printf("Misclassification error <= %f\%.\n", misclassification_error);
-	printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", progressive_x.getModelNumber(), reference_model_number);
-
-	// Visualize the final results if needed
-	if (visualize_results_)
+	for (double spatialWeight = 0.0; spatialWeight <= 0.5; spatialWeight += 0.1)
 	{
-		// If the visualizer has not been initialize, initialize it.
-		if (!visualize_inner_steps_)
-			visualizer.setLabeling(&progressive_x.getStatistics().labeling, // The obtained labeling
-				progressive_x.getModelNumber() + 1); // The number of labels
-		visualizer.visualize(0, // If the delay is 0, it will wait for key press.
-			"Resulting labeling"); // The name of the window
+		for (double labelCost = 0.0; labelCost <= 100; labelCost += 5)
+		{
+			// Get a labeling
+			std::vector<size_t> labels;
+			std::vector<int> intLabels;
+			size_t max_label;
+			getLabeling<gcransac::utils::DefaultHomographyEstimator>(
+				points,
+				models,
+				20.0,
+				inlier_outlier_threshold_,
+				spatialWeight,
+				labelCost,
+				labels,
+				max_label);
+			intLabels.resize(labels.size());
+
+			std::vector<cv::Scalar> colors(max_label + 1);
+			for (auto& color : colors)
+				color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
+
+			for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
+			{
+				intLabels[pointIdx] = labels[pointIdx];
+				if (intLabels[pointIdx] == max_label)
+					intLabels[pointIdx] = -1;
+			}
+
+			double misclassification_error2 = getMisclassificationError(
+				intLabels,
+				reference_labeling,
+				max_label,
+				reference_model_number);
+
+			double ME = (misclassification_error1 == -1 || misclassification_error2 == -1 ?
+				MAX(misclassification_error1, misclassification_error2) :
+				MIN(misclassification_error1, misclassification_error2));
+
+			printf("Processing time = %f secs.\n", time);
+			printf("Misclassification error <= (%f, %f)\%.\n", misclassification_error1, misclassification_error2);
+			printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
+
+			saving_mutex.lock();
+			std::ofstream file("tuning.csv", std::fstream::app);
+			file << scene_name_ << ";"
+				<< "tanimoto" << ";"
+				<< "magsac" << ";"
+				<< ClusteringMethod::getName() << ";"
+				<< spatialWeight << ";"
+				<< labelCost << ";"
+				<< confidence_ << ";"
+				<< starting_hypothesis_number_ << ";"
+				<< added_hypothesis_number_ << ";"
+				<< minimum_point_number_ << ";"
+				<< maximum_iterations << ";"
+				<< inlier_outlier_threshold_ << ";"
+				<< maximum_tanimoto_similarity_ << ";"
+				<< minimum_point_number_ << ";"
+				<< time << ";"
+				<< ME << ";"
+				<< (int)modelData.size() - (int)reference_model_number << "\n";
+			file.close();
+			saving_mutex.unlock();
+		}
 	}
-	visualizer.release();
-	printf("\n");*/
+
+	/*cv::namedWindow("Image 1", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+	cv::namedWindow("Image 2", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+	cv::resizeWindow("Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
+	cv::resizeWindow("Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
+	cv::imshow("Image 1", source_image);
+	cv::imshow("Image 2", destination_image);
+	cv::waitKey(0);*/
 }
 
 void drawMatches(
