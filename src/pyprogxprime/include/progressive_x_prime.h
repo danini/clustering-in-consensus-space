@@ -7,7 +7,7 @@
 #include "model.h"
 #include "settings.h"
 #include "statistics.h"
-#include "scoring_function.h"
+#include "modified_scoring_function.h"
 
 namespace progx
 {
@@ -50,6 +50,19 @@ namespace progx
 			confidence(0.99)
 		{
 			oneMinusConfidence = 1.0 - confidence;
+		}
+
+		void print()
+		{
+			printf("Parameters:");
+			printf("\n\tInlier-outlier threshold = %f", inlierOutlierThreshold);
+			printf("\n\tModel-to-model distance threshold = %f", modelDistanceThreshold);
+			printf("\n\tMaximum iteration number = %d", static_cast<int>(maximumIterations));
+			printf("\n\tStarting number of hypotheses = %d", static_cast<int>(startingHypothesisNumber));
+			printf("\n\tAdded number of hypotheses = %d", static_cast<int>(addedHypothesisNumber));
+			printf("\n\tConfidence = %f", confidence);
+			printf("\n\tMinimum inlier number = %d\n", static_cast<int>(minimumInlierNumber));
+				
 		}
 	};
 
@@ -106,7 +119,7 @@ namespace progx
 		class _RobustLoss,
 		class _ModelEstimator, // The model estimator used for estimating the instance parameters from a set of points
 		class _Sampler,
-		class _ScoringFunction = gcransac::MSACScoringFunction<_ModelEstimator>> // The sampler used in the main RANSAC loop of GC-RANSAC
+		class _ScoringFunction = progx::MSACScoringFunction<_ModelEstimator>> // The sampler used in the main RANSAC loop of GC-RANSAC
 		class ProgressiveXPrime
 	{
 	public:
@@ -153,6 +166,11 @@ namespace progx
 			gcransac::Model& model_,
 			std::vector<size_t>& inliers_) const;
 
+		void displayClustering(
+			const cv::Mat& points_,
+			const std::vector<ModelData>& hypothesisData_,
+			const std::vector< std::vector<size_t> >& clusterIndices_) const;
+
 	protected:
 		MultiModelSettings settings;
 		std::unique_ptr<_ModelEstimator> estimatorObject;
@@ -171,11 +189,6 @@ namespace progx
 			const std::vector<ModelData>& hypothesisData_,
 			const std::vector< std::vector<size_t> >& clusterIndices_,
 			std::vector<std::vector<size_t>>& clusterInliers_) const;
-
-		void displayClustering(
-			const cv::Mat& points_,
-			const std::vector<ModelData>& hypothesisData_,
-			const std::vector< std::vector<size_t> >& clusterIndices_) const;
 
 		void refitAndReplace(
 			std::vector<ModelData>& hypothesisData_,
@@ -414,9 +427,6 @@ namespace progx
 
 			std::cout << "Inliers = " << inlierNums << std::endl;*/
 		}
-
-
-		printf("Number of iterations = %d.\n", iterationIdx);
 	}
 
 
@@ -441,7 +451,7 @@ namespace progx
 	{
 		constexpr size_t kSampleNumber = _ModelEstimator::sampleSize();
 		const size_t kPointNumber = points_.rows;
-		const static gcransac::Score emptyScore;
+		const static progx::Score emptyScore;
 		std::unique_ptr<size_t[]> currentSample(new size_t[kSampleNumber]); // Minimal sample for model fitting
 		int currentHypothesisNumber;
 		std::vector<size_t> tmpInliers;
@@ -498,7 +508,7 @@ namespace progx
 				auto& model = tmpHypotheses[innerHypothesisIdx];
 
 				// Calculate the consensus set of the current hypothesis
-				gcransac::Score score = scoringFunction->getScore(
+				progx::Score score = scoringFunction->getScore(
 					points_, // All points
 					model, // The current model parameters
 					estimator_, // The estimator 
@@ -631,7 +641,7 @@ namespace progx
 		gcransac::Model& model_,
 		std::vector<size_t>& inliers_) const
 	{
-		gcransac::Score bestScore;
+		progx::Score bestScore;
 		std::vector<size_t> tmpInliers;
 		std::vector<gcransac::Model> tmpModel(1);
 		std::vector<double> weights(points_.rows, 0.0);
@@ -642,7 +652,7 @@ namespace progx
 		{
 			std::fill(std::begin(weights), std::end(weights), 0.0);
 
-			gcransac::Score score = scoringFunction->getScore(
+			progx::Score score = scoringFunction->getScore(
 				points_, // All points
 				tmpModel[0], // The current model parameters
 				estimator_, // The estimator 

@@ -78,7 +78,8 @@ namespace clustering
 		};
 
 		template <typename _Type,
-			typename _Estimator>
+			typename _Estimator,
+			size_t _DimensionNumber>
 		class MAGSACLoss : public Loss<_Type>
 		{
 		public:
@@ -86,14 +87,22 @@ namespace clustering
 				const _Type& residual_,
 				const _Type& threshold_) const
 			{
+				if constexpr (_DimensionNumber != 2 && _DimensionNumber != 4)
+				{
+					fprintf(stderr, "Incorrect dimension number (%d) for the MAGSAC loss function. It supposed to be either 2 or 4", _DimensionNumber);
+					return 0;
+				}
+
 				if (residual_ > threshold_)
 					return 0;
 
 				// The degrees of freedom of the data from which the model is estimated.
 				// E.g., for models coming from point correspondences (x1,y1,x2,y2), it is 4.
-				constexpr size_t degrees_of_freedom = 4;
+				constexpr size_t degrees_of_freedom = _DimensionNumber;
 				// A 0.99 quantile of the Chi^2-distribution to convert sigma values to residuals
-				constexpr double k = 3.64;
+				constexpr double k = 
+					_DimensionNumber == 2 ? 
+					3.03 : 3.64;
 				// A multiplier to convert residual values to sigmas
 				constexpr double threshold_to_sigma_multiplier = 1.0 / k;
 				// Calculating k^2 / 2 which will be used for the estimation and, 

@@ -6,7 +6,9 @@ project(ProgressiveXPrime LANGUAGES CXX)
 option(USE_OPENMP "Use OPENMP" ON)
 
 # indicate if the sample project should be generated
-option(CREATE_SAMPLE_PROJECT "Create the Sample Project" ON)
+option(CREATE_TRADITIONAL_TEST_PROJECT "Create the Project for the traditional multi-model tests." ON)
+option(CREATE_LINE_SEGMENT_PROJECT "Create the Project for the multi line segment tests." ON)
+option(CREATE_POSE_ESTIMATION_PROJECT "Create the Project for multi-homography to pose tests." ON)
 
 SET (CMAKE_BUILD_TYPE "RELEASE")
 
@@ -39,6 +41,19 @@ endif (OPENCV_FOUND)
 # ==============================================================================
 find_package(Eigen3 REQUIRED)
 set(EIGEN_INCLUDE_DIRS ${EIGEN3_INCLUDE_DIR})
+
+# ==============================================================================
+# Find GFlags
+# ==============================================================================
+find_package(gflags REQUIRED)
+if(DEFINED gflags_VERSION_STRING OR DEFINED GFLAGS_VERSION_STRING)
+	# different cmake variable with lower or upper case exist
+	set(GFLAGS_INCLUDE_DIR ${GFLAGS_INCLUDE_DIR})
+	set(GFLAGS_LIBRARIES ${GFLAGS_LIBRARIES})
+  message( "Found Gflags ${GFLAGS_VERSION_STRING}" )
+  message( STATUS "> GFLAGS_INCLUDE_DIR:   ${GFLAGS_INCLUDE_DIR}" )
+  message( STATUS "> GFLAGS_LIBRARIES:   ${GFLAGS_LIBRARIES}" )
+endif()
 
 # ==============================================================================
 # Find OpenMP
@@ -81,7 +96,8 @@ add_library(GraphCutRANSAC STATIC
 
 target_link_libraries(GraphCutRANSAC
 	${OpenCV_LIBS}
-	Eigen3::Eigen)
+	Eigen3::Eigen
+	gflags)
 
 # ==============================================================================
 # Structure: Progressive-X Prime Library
@@ -125,6 +141,7 @@ target_link_libraries(${PROJECT_NAME}
 	${OpenCV_LIBS}
 	Eigen3::Eigen
 	GraphCutRANSAC
+	gflags
 )
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
@@ -132,18 +149,53 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
 # ==============================================================================
 # Structure: Applications
 # ==============================================================================
-if (CREATE_SAMPLE_PROJECT)
+if (CREATE_TRADITIONAL_TEST_PROJECT)
 	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
 
-	add_executable(SampleProject
+	add_executable(TraditionalTests
 		examples/cpp_example.cpp)
 		
-	target_link_libraries(SampleProject PUBLIC
+	target_link_libraries(TraditionalTests PUBLIC
 		${PROJECT_NAME}
 		${OpenCV_LIBS}
 		Eigen3::Eigen
 		GraphCutRANSAC
+		gflags
 	)
 
-	add_dependencies(SampleProject ${PROJECT_NAME})
-endif (CREATE_SAMPLE_PROJECT)
+	add_dependencies(TraditionalTests ${PROJECT_NAME})
+endif (CREATE_TRADITIONAL_TEST_PROJECT)
+
+if (CREATE_LINE_SEGMENT_PROJECT)
+	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
+
+	add_executable(LineSegmentTests
+		examples/example_line_segments.cpp)
+		
+	target_link_libraries(LineSegmentTests PUBLIC
+		${PROJECT_NAME}
+		${OpenCV_LIBS}
+		Eigen3::Eigen
+		GraphCutRANSAC
+		gflags
+	)
+
+	add_dependencies(LineSegmentTests ${PROJECT_NAME})
+endif (CREATE_LINE_SEGMENT_PROJECT)
+
+if (CREATE_POSE_ESTIMATION_PROJECT)
+	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
+
+	add_executable(PoseGraphTests
+		examples/example_pose.cpp)
+		
+	target_link_libraries(PoseGraphTests PUBLIC
+		${PROJECT_NAME}
+		${OpenCV_LIBS}
+		Eigen3::Eigen
+		GraphCutRANSAC
+		gflags
+	)
+
+	add_dependencies(PoseGraphTests ${PROJECT_NAME})
+endif (CREATE_POSE_ESTIMATION_PROJECT)
