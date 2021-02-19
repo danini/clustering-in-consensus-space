@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 
 #include <gflags/gflags.h>
+#include "sophus/se3.hpp"
 
 #include <mutex>
 
@@ -119,8 +120,12 @@ double rotationError(
 	const Eigen::Matrix3d& estimated_rotation_);
 
 void poseAveraging(
-	const std::vector<Eigen::Matrix<double, 3, 4>>& poses_,
-	Eigen::Matrix<double, 3, 4>& estimatedPose_);
+	const std::vector<Sophus::SE3d>& poses_,
+	Sophus::SE3d& estimatedPose_);
+
+void naiveRotationAveraging(
+	const std::vector<Sophus::SE3d>& poses_,
+	Sophus::SO3d& rotation_);
 
 std::mutex writing_mutex;
 
@@ -192,10 +197,15 @@ int main(int argc, char** argv)
 	}
 
 	// TODO: check this
-	Eigen::Matrix3d relativeRotation =
-		destinationPose.block<3, 3>(0, 0) * sourcePose.block<3, 3>(0, 0).transpose();
-	Eigen::Vector3d relativeTranslation =
-		destinationPose.bottomRows<1>().transpose() - sourcePose.block<3, 3>(0, 0).transpose() * sourcePose.bottomRows<1>().transpose();
+	double scale;
+	Eigen::Matrix3d sourceRotation = sourcePose.block<3, 3>(0, 0),
+		destinationRotation = destinationPose.block<3, 3>(0, 0);
+	pose::convertToRotationMatrix(sourceRotation, &scale);
+	pose::convertToRotationMatrix(destinationRotation, &scale);
+
+	const Sophus::SE3d sourceSE3(sourceRotation, sourcePose.bottomRows<1>()),
+		destinationSE3(destinationRotation, destinationPose.bottomRows<1>());
+	const Sophus::SE3d relativePose = destinationSE3 * sourceSE3.inverse();
 
 	// Detecting point correspondences
 	cv::Mat correspondences;
@@ -236,7 +246,7 @@ int main(int argc, char** argv)
 	}
 
 	// Initializing the vector consisting of the poses decomposed from the homographies and, possibly, the essential matrix
-	std::vector<Eigen::Matrix<double, 3, 4>> poses;
+	std::vector<Sophus::SE3d> poses;
 	std::vector<std::vector<Eigen::Vector3d>> points3D;
 	if (FLAGS_estimate_essential_matrix)
 		poses.reserve(kHomographyNumber + 1);
@@ -264,8 +274,8 @@ int main(int argc, char** argv)
 			normal,
 			points3d);
 
-		poses.resize(poses.size() + 1);
-		poses.back() << rotation, translation;
+		pose::convertToRotationMatrix(rotation, &scale);
+		poses.emplace_back(Sophus::SE3d(rotation, translation));
 	}
 
 	// Estimate the essential matrix if needed
@@ -298,12 +308,12 @@ int main(int argc, char** argv)
 			rotation,
 			translation);
 
-		poses.resize(poses.size() + 1);
-		poses.back() << rotation, translation;
+		pose::convertToRotationMatrix(rotation, &scale);
+		poses.emplace_back(Sophus::SE3d(rotation, translation));
 	}
 
 	// Do the pose averaging
-	Eigen::Matrix<double, 3, 4> finalPose;
+	Sophus::SE3d finalPose;
 	poseAveraging(
 		poses,
 		finalPose);
@@ -311,31 +321,39 @@ int main(int argc, char** argv)
 	// Calculate the pose errors
 	poses.emplace_back(finalPose);
 
+	Sophus::SO3d naiveRotation;
+	naiveRotationAveraging(
+		poses,
+		naiveRotation);
+
+	// Calculate the pose errors
+	poses.emplace_back(Sophus::SE3d(naiveRotation, Eigen::Vector3d::Zero()));
+
 	for (size_t poseIdx = 0; poseIdx < poses.size(); ++poseIdx)
 	{
 		const auto& pose = poses[poseIdx];
 
 		double rErr = rotationError(
-			relativeRotation,
-			pose.block<3, 3>(0, 0));
+			relativePose.rotationMatrix(),
+			pose.rotationMatrix());
 		double tErr = translationError(
-			relativeTranslation,
-			pose.rightCols<1>());
+			relativePose.translation(),
+			pose.translation());
 
 		if (poseIdx < poses.size() - 1)
 			printf("%d. pose | Rotation error = %f degrees | Translation error = %f degrees.\n", 
 				poseIdx, rErr, tErr);
 		else
 			printf("Averaged pose | Rotation error = %f degrees | Translation error = %f degrees.\n",
-				poseIdx, rErr, tErr);
+				rErr, tErr);
 	}
 
 	return 0;
 }
 
 void poseAveraging(
-	const std::vector<Eigen::Matrix<double, 3, 4>> &poses_,
-	Eigen::Matrix<double, 3, 4> &estimatedPose_)
+	const std::vector<Sophus::SE3d> &poses_,
+	Sophus::SE3d& estimatedPose_)
 {
 	// TODO
 }
@@ -495,116 +513,6 @@ void estimateHomographies(
 	}
 }
 
-
-void poseFromMultiHomographyTest()
-{
-
-	// Decomposing the homographies
-	/*Eigen::Vector3d normal;
-	for (size_t homographyIdx = 0; homographyIdx < kModelNumber; ++homographyIdx)
-	{
-		const auto& homography = models[homographyIdx];
-		const auto& homographyData = modelData[homographyIdx];
-		poses.resize(poses.size() + 1);
-		auto& pose = poses.back();
-		points3D.resize(poses.size());
-
-		Eigen::Matrix3d& rotation = pose.block<3, 3>(0, 0);
-		Eigen::Vector3d& translation = pose.rightCols<1>();
-
-		pose::poseFromHomographyMatrix(
-			homography.descriptor,
-			sourceIntrinsics,
-			destinationIntrinsics,
-			correspondences,
-			homographyData.inliers,
-			rotation,
-			translation,
-			normal,
-			points3D.back());
-	}
-
-	// Estimate the essential matrix if needed
-	/*if constexpr (kEstimateEssentialMatrix)
-	{
-		gcransac::sampler::UniformSampler local_optimization_sampler(&correspondences); // The local optimization sampler is used inside the local optimization
-
-		// Checking if the samplers are initialized successfully.
-		if (!sampler.isInitialized() ||
-			!local_optimization_sampler.isInitialized())
-		{
-			fprintf(stderr, "One of the samplers is not initialized successfully.\n");
-			return;
-		}
-
-		gcransac::neighborhood::GridNeighborhoodGraph<4> neighborhood(&correspondences,
-			{ sourceImage.cols / static_cast<double>(8),
-				sourceImage.rows / static_cast<double>(8),
-				destinationImage.cols / static_cast<double>(8),
-				destinationImage.rows / static_cast<double>(8) },
-			8);
-
-		// Normalize the point coordinate by the intrinsic matrices
-		cv::Mat normalizedCorrespondences(correspondences.size(), CV_64F);
-		gcransac::utils::normalizeCorrespondences(correspondences,
-			sourceIntrinsics,
-			destinationIntrinsics,
-			normalizedCorrespondences);
-
-		// Normalize the threshold by the average of the focal lengths
-		const double kNormalizedThreshold =
-			kEssentialMatrixThreshold / ((sourceIntrinsics(0, 0) + sourceIntrinsics(1, 1) +
-				destinationIntrinsics(0, 0) + destinationIntrinsics(1, 1)) / 4.0);
-
-		// Apply Graph-cut RANSAC
-		gcransac::utils::DefaultEssentialMatrixEstimator estimator(
-			sourceIntrinsics,
-			destinationIntrinsics);
-		std::vector<int> inliers;
-		gcransac::EssentialMatrix model;
-
-		// Initializing SPRT test
-		gcransac::preemption::SPRTPreemptiveVerfication<gcransac::utils::DefaultEssentialMatrixEstimator> preemptive_verification(
-			correspondences,
-			estimator,
-			0.1);
-
-		gcransac::GCRANSAC<gcransac::utils::DefaultEssentialMatrixEstimator,
-			gcransac::neighborhood::GridNeighborhoodGraph<4>,
-			gcransac::MSACScoringFunction<gcransac::utils::DefaultEssentialMatrixEstimator>,
-			gcransac::preemption::SPRTPreemptiveVerfication<gcransac::utils::DefaultEssentialMatrixEstimator>> gcransac;
-		gcransac.settings.threshold = kNormalizedThreshold; // The inlier-outlier threshold
-		gcransac.settings.spatial_coherence_weight = 0.0; // The weight of the spatial coherence term
-		gcransac.settings.confidence = kConfidence; // The required confidence in the results
-		gcransac.settings.max_local_optimization_number = 50; // The maximum number of local optimizations
-		gcransac.settings.max_iteration_number = 5000; // The maximum number of iterations
-		gcransac.settings.min_iteration_number = 50; // The minimum number of iterations
-		gcransac.settings.neighborhood_sphere_radius = 8; // The radius of the neighborhood ball
-
-		// Start GC-RANSAC
-		gcransac.run(normalizedCorrespondences,
-			estimator,
-			&sampler,
-			&local_optimization_sampler,
-			&neighborhood,
-			model,
-			preemptive_verification);
-
-		// Get the statistics of the results
-		const gcransac::utils::RANSACStatistics& statistics = gcransac.getRansacStatistics();
-
-		// Print the statistics
-		printf("Essential matrix estimation statistics:\n");
-		printf("\tElapsed time = %f secs\n", statistics.processing_time);
-		printf("\tInlier number = %d\n", static_cast<int>(statistics.inliers.size()));
-		printf("\tApplied number of local optimizations = %d\n", static_cast<int>(statistics.local_optimization_number));
-		printf("\tApplied number of graph-cuts = %d\n", static_cast<int>(statistics.graph_cut_number));
-		printf("\tNumber of iterations = %d\n\n", static_cast<int>(statistics.iteration_number));
-
-		// Decompose the essential matrix
-	}*/
-}
-
 double rotationError(const Eigen::Matrix3d& reference_rotation_,
 	const Eigen::Matrix3d& estimated_rotation_)
 {
@@ -625,5 +533,24 @@ double translationError(
 	const Eigen::Vector3d& reference_translation_,
 	const Eigen::Vector3d& estimated_translation_)
 {
-	return std::acos(std::clamp(reference_translation_.normalized().dot(estimated_translation_.normalized()), -1.0, 1.0));
+	constexpr double radian_to_degree_multiplier = 180.0 / M_PI;
+
+	return radian_to_degree_multiplier * std::acos(std::clamp(reference_translation_.normalized().dot(estimated_translation_.normalized()), -1.0, 1.0));
+}
+
+void naiveRotationAveraging(
+	const std::vector<Sophus::SE3d> &poses_,
+	Sophus::SO3d &rotation_)
+{
+	Eigen::Matrix3d coefficients = Eigen::Matrix3d::Zero();
+
+	for (const auto& pose : poses_)
+		coefficients += pose.rotationMatrix();
+
+	Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+		coefficients,
+		Eigen::ComputeFullU | Eigen::ComputeFullV);
+
+	rotation_ = 
+		Sophus::SO3d(svd.matrixU() * svd.matrixV().transpose());
 }

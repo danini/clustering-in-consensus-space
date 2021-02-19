@@ -249,6 +249,10 @@ namespace pose
 
 		points3D_.clear();
 		for (size_t i = 0; i < RCmbs.size(); ++i) {
+
+			if (RCmbs[i].determinant() < 0)
+				continue;
+
 			std::vector<Eigen::Vector3d> points3DCmb;
 			checkCheirality(RCmbs[i], 
 				tCmbs[i], 
@@ -363,10 +367,10 @@ namespace pose
 		const Eigen::Vector3d t1_star = half_nt * (esii_t_r * n2 - n_t * n1);
 		const Eigen::Vector3d t2_star = half_nt * (esii_t_r * n1 - n_t * n2);
 
-		const Eigen::Matrix3d R1 = computeHomographyRotation(normalizedHomography, t1_star, n1, v);
+		Eigen::Matrix3d R1 = computeHomographyRotation(normalizedHomography, t1_star, n1, v);
 		const Eigen::Vector3d t1 = R1 * t1_star;
 
-		const Eigen::Matrix3d R2 = computeHomographyRotation(normalizedHomography, t2_star, n2, v);
+		Eigen::Matrix3d R2 = computeHomographyRotation(normalizedHomography, t2_star, n2, v);
 		const Eigen::Vector3d t2 = R2 * t2_star;
 
 		RsDstSrc_.emplace_back(-R1);

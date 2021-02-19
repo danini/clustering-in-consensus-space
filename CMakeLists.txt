@@ -55,6 +55,17 @@ if(DEFINED gflags_VERSION_STRING OR DEFINED GFLAGS_VERSION_STRING)
   message( STATUS "> GFLAGS_LIBRARIES:   ${GFLAGS_LIBRARIES}" )
 endif()
 
+find_package(Sophus)
+message(STATUS "Search Dependency: Sophus")
+
+if(Sophus_FOUND)
+	get_target_property(Sophus_INCLUDE_DIR Sophus::Sophus INTERFACE_INCLUDE_DIRECTORIES)
+	include_directories(AFTER ${Sophus_INCLUDE_DIR})
+else()
+    message(WARNING "Using Sophus is set, but Sophus is NOT found. Sophus is used only in the pose estimation example project which will, thus, not be built.")
+    set(CREATE_POSE_ESTIMATION_PROJECT 0)
+endif()
+
 # ==============================================================================
 # Find OpenMP
 # ==============================================================================
@@ -195,6 +206,7 @@ if (CREATE_POSE_ESTIMATION_PROJECT)
 		Eigen3::Eigen
 		GraphCutRANSAC
 		gflags
+		Sophus
 	)
 
 	add_dependencies(PoseGraphTests ${PROJECT_NAME})
