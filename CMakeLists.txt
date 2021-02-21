@@ -59,7 +59,11 @@ find_package(Sophus)
 message(STATUS "Search Dependency: Sophus")
 
 if(Sophus_FOUND)
-	get_target_property(Sophus_INCLUDE_DIR Sophus::Sophus INTERFACE_INCLUDE_DIRECTORIES)
+	if (TARGET Sophus::Sophus)
+		get_target_property(Sophus_INCLUDE_DIR Sophus::Sophus INTERFACE_INCLUDE_DIRECTORIES)
+	else()
+		find_path(SOPHUS_INCLUDE_DIR "sophus/common.hpp")
+	endif()
 	include_directories(AFTER ${Sophus_INCLUDE_DIR})
 else()
     message(WARNING "Using Sophus is set, but Sophus is NOT found. Sophus is used only in the pose estimation example project which will, thus, not be built.")
@@ -195,10 +199,14 @@ if (CREATE_LINE_SEGMENT_PROJECT)
 endif (CREATE_LINE_SEGMENT_PROJECT)
 
 if (CREATE_POSE_ESTIMATION_PROJECT)
+	find_package(OpenMVG CONFIG REQUIRED)
+
 	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
 
 	add_executable(PoseGraphTests
-		examples/example_pose.cpp)
+		examples/example_pose.cpp
+		examples/pose_averaging/openMVG.hpp
+		examples/pose_averaging/openMVG.cpp)
 		
 	target_link_libraries(PoseGraphTests PUBLIC
 		${PROJECT_NAME}
@@ -206,7 +214,8 @@ if (CREATE_POSE_ESTIMATION_PROJECT)
 		Eigen3::Eigen
 		GraphCutRANSAC
 		gflags
-		Sophus
+		#Sophus
+		OpenMVG::openMVG_sfm
 	)
 
 	add_dependencies(PoseGraphTests ${PROJECT_NAME})
