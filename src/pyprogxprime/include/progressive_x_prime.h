@@ -8,6 +8,7 @@
 #include "settings.h"
 #include "statistics.h"
 #include "modified_scoring_function.h"
+#include "connected_component_sampler.h"
 
 namespace progx
 {
@@ -184,6 +185,11 @@ namespace progx
 			_Sampler& sampler_,
 			size_t* sample_) const;
 
+		template <size_t _SampleSize>
+		inline bool sample(
+			_Sampler& sampler_,
+			std::vector<size_t>& sample_) const;
+
 		void extractInliersFromClusters(
 			const cv::Mat& points_,
 			const std::vector<ModelData>& hypothesisData_,
@@ -244,7 +250,7 @@ namespace progx
 		size_t iterationIdx = 0;
 
 		// TODO: this has been replaced by by squared truncated
-		scoringFunction->initialize(3.0 / 2.0 * settings.inlierOutlierThreshold * settings.inlierOutlierThreshold,
+		scoringFunction->initialize(/*3.0 / 2.0 * settings.inlierOutlierThreshold **/ settings.inlierOutlierThreshold,
 			kPointNumber); // Initializing the scoring function
 
 		while (running)
@@ -452,6 +458,7 @@ namespace progx
 		constexpr size_t kSampleNumber = _ModelEstimator::sampleSize();
 		const size_t kPointNumber = points_.rows;
 		const static progx::Score emptyScore;
+		std::vector<size_t> currentExtendedSample;
 		std::unique_ptr<size_t[]> currentSample(new size_t[kSampleNumber]); // Minimal sample for model fitting
 		int currentHypothesisNumber;
 		std::vector<size_t> tmpInliers;
@@ -469,37 +476,81 @@ namespace progx
 			++totalHypothesisNumber_;
 
 			// If the sampling is not successful, try again.
-			if (!sample<kSampleNumber>(
-				pointPool_,
-				sampler_, // The current pool from which the points are chosen
-				currentSample.get())) // The current sample
+			if constexpr (std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
 			{
-				++attempts;
-				--hypothesesIdx;
-				continue;
+				if (!sample<kSampleNumber>(
+					sampler_,
+					currentExtendedSample)) // The current sample
+				{
+					++attempts;
+					--hypothesesIdx;
+					continue;
+				}
+			}
+			else
+			{
+				if (!sample<kSampleNumber>(
+					pointPool_,
+					sampler_, // The current pool from which the points are chosen
+					currentSample.get())) // The current sample
+				{
+					++attempts;
+					--hypothesesIdx;
+					continue;
+				}
 			}
 
 			// Check if the selected sample is valid before estimating the model
 			// parameters which usually takes more time. 
-			if (!estimator_.isValidSample(points_, // All points
-				currentSample.get())) // The current sample
-			{
-				++attempts;
-				--hypothesesIdx;
-				continue;
-			}
+			if constexpr (!std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
+				if (!estimator_.isValidSample(points_, // All points
+					currentSample.get())) // The current sample
+				{
+					++attempts;
+					--hypothesesIdx;
+					continue;
+				}
 
 			currentHypothesisNumber = hypothesesPool_.size();
 			tmpHypotheses.clear();
 
 			// Estimate the model parameters using the current sample
-			if (!estimator_.estimateModel(points_,  // All points
-				currentSample.get(), // The current sample
-				&tmpHypotheses)) // The estimated model parameters
+			if constexpr (std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
 			{
-				++attempts;
-				--hypothesesIdx;
-				continue;
+				if (currentExtendedSample.size() == kSampleNumber)
+				{
+					if (!estimator_.estimateModel(points_,  // All points
+						&(currentExtendedSample[0]), // The current sample
+						&tmpHypotheses)) // The estimated model parameters
+					{
+						++attempts;
+						--hypothesesIdx;
+						continue;
+					}
+				}
+				else
+				{
+					if (!estimator_.estimateModelNonminimal(points_,  // All points
+						&(currentExtendedSample[0]), // The current sample
+						currentExtendedSample.size(), // The current sample
+						&tmpHypotheses)) // The estimated model parameters
+					{
+						++attempts;
+						--hypothesesIdx;
+						continue;
+					}
+				}
+			}
+			else
+			{
+				if (!estimator_.estimateModel(points_,  // All points
+					currentSample.get(), // The current sample
+					&tmpHypotheses)) // The estimated model parameters
+				{
+					++attempts;
+					--hypothesesIdx;
+					continue;
+				}
 			}
 
 			//for (int innerHypothesisIdx = hypothesesPool_.size() - 1; innerHypothesisIdx >= currentHypothesisNumber; --innerHypothesisIdx)
@@ -843,14 +894,31 @@ namespace progx
 		class _RobustLoss,
 		class _ModelEstimator, // The model estimator used for estimating the instance parameters from a set of points
 		class _Sampler, // The sampler used in the main RANSAC loop of GC-RANSAC
-		class _ScoringFunction> 
-	template <size_t _SampleSize>
+		class _ScoringFunction>
+		template <size_t _SampleSize>
 	inline bool ProgressiveXPrime<_Clustering, _ModelModelDistance, _RobustLoss, _ModelEstimator, _Sampler, _ScoringFunction>::sample(
-		const std::vector<size_t> &pool_,
+		const std::vector<size_t>& pool_,
 		_Sampler& sampler_,
 		size_t* sample_) const
 	{
 		return sampler_.sample(pool_, // The pool of indices
+			sample_, // The selected sample
+			_SampleSize); // The number of points to be selected
+	}
+
+	template<
+		class _Clustering, // The clustering algorithm used in the consensus space
+		class _ModelModelDistance, //
+		class _RobustLoss,
+		class _ModelEstimator, // The model estimator used for estimating the instance parameters from a set of points
+		class _Sampler, // The sampler used in the main RANSAC loop of GC-RANSAC
+		class _ScoringFunction>
+	template <size_t _SampleSize>
+	inline bool ProgressiveXPrime<_Clustering, _ModelModelDistance, _RobustLoss, _ModelEstimator, _Sampler, _ScoringFunction>::sample(
+		_Sampler& sampler_,
+		std::vector<size_t> &sample_) const
+	{
+		return sampler_.sample(
 			sample_, // The selected sample
 			_SampleSize); // The number of points to be selected
 	}

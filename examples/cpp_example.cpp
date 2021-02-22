@@ -133,8 +133,7 @@ void drawMatches(
 
 std::mutex writing_mutex;
 int settings_number = 0;
-constexpr bool runTestPoseFromMultiHomography = false;
-constexpr bool runTestHomography = false;
+constexpr bool runTestHomography = true;
 constexpr bool runTestTwoViewMotion = false;
 constexpr bool runTestMotion = false;
 
@@ -143,9 +142,6 @@ std::vector<std::string> getAvailableTestScenes(const Problem& problem_);
 int main(int argc, const char* argv[])
 {
 	const std::string root_directory = ""; // The directory where the 'data' folder is found
-
-	if constexpr (runTestPoseFromMultiHomography)
-		poseFromMultiHomographyTest();
 
 	const double confidence = 0.99,
 		spatial_coherence_weight = 0.1,
@@ -225,7 +221,7 @@ int main(int argc, const char* argv[])
 
 	if constexpr (runTestTwoViewMotion)
 	{
-		const std::vector<double> thresholds = { 0.75, 1.0, 1.5, 2.0, 3.0 };
+		const std::vector<double> thresholds = { 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0 };
 		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85, 0.90 };
 		const std::vector<int> minimumPoints = { 20, 30, 40 };
 		const std::vector<double> confidences = { /*0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
@@ -256,7 +252,7 @@ int main(int argc, const char* argv[])
 										item.addedHypothesisNumber = addedNumber;
 									}
 
-#pragma omp parallel for num_threads(24)
+#pragma omp parallel for num_threads(30)
 	for (int settingIdx = 0; settingIdx < settings.size(); ++settingIdx)
 	{
 		for (const std::string& scene : getAvailableTestScenes(Problem::TwoViewMotion))
@@ -308,10 +304,10 @@ int main(int argc, const char* argv[])
 	if constexpr (runTestHomography)
 	{
 		std::vector<progx::MultiModelSettings> settings;
-		const std::vector<double> thresholds = { 3.0, 3.5, 4.0, 5.0, 6.0 };
-		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85 };
+		const std::vector<double> thresholds = { 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0 };
+		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85, 0.90 };
 		const std::vector<int> minimumPoints = { 20, 10, 15 };
-		const std::vector<double> confidences = { 0.9, 0.95, 0.99, /*0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
+		const std::vector<double> confidences = { /*0.9, 0.95, 0.99, 0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
 		const std::vector<int> maximumIterations = { 50, 75, 150, 100, 200 };
 		const std::vector<int> startingHypothesisNumber = { 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
 		const std::vector<int> addedHypothesisNumber = { 1, 5, 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
@@ -337,7 +333,7 @@ int main(int argc, const char* argv[])
 										item.addedHypothesisNumber = addedNumber;
 									}
 
-#pragma omp parallel for num_threads(24)
+#pragma omp parallel for num_threads(30)
 		for (int settingIdx = 0; settingIdx < settings.size(); ++settingIdx)
 		{
 			for (const std::string& scene : getAvailableTestScenes(Problem::Homography))
@@ -1283,6 +1279,16 @@ void testMultiTwoViewMotionFitting(
 		std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
 		printf("P-NAPSAC initialization time = %f secs.\n", elapsed_seconds.count());
 
+		progx::utils::DefaultFundamentalMatrixEstimator estimator;
+		gcransac::sampler::UniformSampler uniformSampler(&points);
+		gcransac::sampler::ConnectedComponentSampler connectedComponentSampler(
+			&points,
+			estimator.sampleSize(),
+			20,
+			200,
+			5,
+			false);
+
 		// Applying Progressive-X
 		typedef progx::ProgressiveXPrime<
 			clustering::density::MeanShiftClustering<
@@ -1291,7 +1297,7 @@ void testMultiTwoViewMotionFitting(
 			clustering::distances::TanimotoDistance<progx::ModelData>,
 			clustering::losses::MAGSACLoss<double, progx::utils::DefaultFundamentalMatrixEstimator, 4>,
 			progx::utils::DefaultFundamentalMatrixEstimator,
-			gcransac::sampler::ProgressiveNapsacSampler<4>> ProgXPrime;
+			gcransac::sampler::ConnectedComponentSampler> ProgXPrime;
 
 		ProgXPrime progressiveXPrime;
 
@@ -1315,14 +1321,13 @@ void testMultiTwoViewMotionFitting(
 		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
 		progressiveXPrime.run(
 			points,
-			sampler,
+			connectedComponentSampler,
 			models,
 			modelData);
 		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
 		elapsed_seconds = end - start; // The elapsed time in seconds
 		double time = elapsed_seconds.count();
 
-		gcransac::utils::DefaultFundamentalMatrixEstimator estimator;
 		for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
 		{
 			size_t inlierNums = 0;
@@ -1405,11 +1410,189 @@ void testMultiTwoViewMotionFitting(
 				printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
 
 				saving_mutex.lock();
-				std::ofstream file("tuningF.csv", std::fstream::app);
+				std::ofstream file("tuningFCC.csv", std::fstream::app);
 				file << scene_name_ << ";"
 					<< "tanimoto" << ";"
-					<< "magsac" << ";"
+					<< "magsac cc" << ";"
 					<< "mean-shift" << ";"
+					<< spatialWeight << ";"
+					<< labelCost << ";"
+					<< confidence_ << ";"
+					<< starting_hypothesis_number_ << ";"
+					<< added_hypothesis_number_ << ";"
+					<< minimum_point_number_ << ";"
+					<< maximum_iterations << ";"
+					<< inlier_outlier_threshold_ << ";"
+					<< maximum_tanimoto_similarity_ << ";"
+					<< minimum_point_number_ << ";"
+					<< time << ";"
+					<< ME << ";"
+					<< (int)modelData.size() - (int)reference_model_number << "\n";
+				file.close();
+				saving_mutex.unlock();
+			}
+
+		/*cv::namedWindow("Image 1", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::namedWindow("Image 2", CV_WINDOW_NORMAL | CV_WINDOW_KEEPRATIO);
+		cv::resizeWindow("Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
+		cv::resizeWindow("Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
+		cv::imshow("Image 1", source_image);
+		cv::imshow("Image 2", destination_image);
+		cv::waitKey(0);*/
+	}
+
+
+	if (true) {
+		// The main sampler is used inside the local optimization
+		std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		gcransac::sampler::ProgressiveNapsacSampler<4> sampler(&points, // All data points
+			{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
+			progx::utils::DefaultFundamentalMatrixEstimator::sampleSize(), // The size of a minimal sample
+			{ static_cast<double>(source_image.cols), // The width of the source image
+				static_cast<double>(source_image.rows), // The height of the source image
+				static_cast<double>(destination_image.cols), // The width of the destination image
+				static_cast<double>(destination_image.rows) }); // The height of the destination image
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
+		printf("P-NAPSAC initialization time = %f secs.\n", elapsed_seconds.count());
+
+		progx::utils::DefaultFundamentalMatrixEstimator estimator;
+		gcransac::sampler::UniformSampler uniformSampler(&points);
+		gcransac::sampler::ConnectedComponentSampler connectedComponentSampler(
+			&points,
+			estimator.sampleSize(),
+			20,
+			200,
+			5,
+			false);
+
+		// Applying Progressive-X
+		typedef progx::ProgressiveXPrime<
+			clustering::density::DBScanClustering<
+			progx::ModelData,
+			clustering::distances::TanimotoDistance<progx::ModelData>>,
+			clustering::distances::TanimotoDistance<progx::ModelData>,
+			clustering::losses::MAGSACLoss<double, progx::utils::DefaultFundamentalMatrixEstimator, 4>,
+			progx::utils::DefaultFundamentalMatrixEstimator,
+			gcransac::sampler::ConnectedComponentSampler> ProgXPrime;
+
+		ProgXPrime progressiveXPrime;
+
+		auto& settings = progressiveXPrime.getMutableSettings();
+		settings.inlierOutlierThreshold = inlier_outlier_threshold_;
+		settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
+		settings.maximumIterations = maximum_iterations;
+		settings.minimumInlierNumber = minimum_point_number_;
+		settings.startingHypothesisNumber = starting_hypothesis_number_;
+		settings.addedHypothesisNumber = added_hypothesis_number_;
+		settings.confidence = confidence_;
+
+		/*progressiveXPrime.image1 =
+			source_image;
+		progressiveXPrime.image2 =
+			destination_image;*/
+
+		std::vector<gcransac::Model> models;
+		std::vector<progx::ModelData> modelData;
+
+		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
+		progressiveXPrime.run(
+			points,
+			connectedComponentSampler,
+			models,
+			modelData);
+		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
+		elapsed_seconds = end - start; // The elapsed time in seconds
+		double time = elapsed_seconds.count();
+
+		for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
+		{
+			size_t inlierNums = 0;
+			for (size_t pointIdx = 0; pointIdx < points.rows; ++pointIdx)
+			{
+				const double distance =
+					estimator.squaredResidual(
+						points.row(pointIdx),
+						models[modelIdx]);
+
+				if (distance < inlier_outlier_threshold_ * inlier_outlier_threshold_)
+				{
+					++inlierNums;
+				}
+			}
+
+			std::cout << "Inliers = " << inlierNums << std::endl;
+		}
+
+		// Calculate the misclassification error if a reference labeling is known
+		double misclassification_error1 = getMisclassificationError<gcransac::utils::DefaultFundamentalMatrixEstimator>(
+			modelData,
+			reference_labeling,
+			modelData.size(),
+			reference_model_number);
+
+		// Get a labeling
+		for (double spatialWeight = 0.0; spatialWeight <= 1.0; spatialWeight += 0.1)
+			for (double labelCost = 0.0; labelCost <= 30.0; labelCost += 5)
+			{
+				std::vector<size_t> labels;
+				std::vector<int> intLabels;
+				size_t max_label;
+				getLabeling<gcransac::utils::DefaultFundamentalMatrixEstimator>(
+					points,
+					models,
+					20.0,
+					inlier_outlier_threshold_,
+					spatialWeight,
+					labelCost,
+					labels,
+					max_label);
+				intLabels.resize(labels.size());
+
+				std::vector<cv::Scalar> colors(max_label + 1);
+				for (auto& color : colors)
+					color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
+
+				for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
+				{
+					intLabels[pointIdx] = labels[pointIdx];
+					if (intLabels[pointIdx] == max_label)
+						intLabels[pointIdx] = -1;
+
+					/*cv::circle(source_image,
+						cv::Point(points.at<double>(pointIdx, 0), points.at<double>(pointIdx, 1)),
+						3,
+						colors[labels[pointIdx]],
+						-1);
+
+					cv::circle(destination_image,
+						cv::Point(points.at<double>(pointIdx, 2), points.at<double>(pointIdx, 3)),
+						3,
+						colors[labels[pointIdx]],
+						-1);*/
+				}
+
+				double misclassification_error2 = getMisclassificationError(
+					intLabels,
+					reference_labeling,
+					max_label,
+					reference_model_number);
+
+				double ME = (misclassification_error1 == -1 || misclassification_error2 == -1 ?
+					MAX(misclassification_error1, misclassification_error2) :
+					MIN(misclassification_error1, misclassification_error2));
+
+				printf("Processing time = %f secs.\n", time);
+				printf("Misclassification error <= (%f, %f)\%.\n", misclassification_error1, misclassification_error2);
+				printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
+
+				saving_mutex.lock();
+				std::ofstream file("tuningFCC.csv", std::fstream::app);
+				file << scene_name_ << ";"
+					<< "tanimoto" << ";"
+					<< "magsac cc" << ";"
+					<< "dbscan" << ";"
 					<< spatialWeight << ";"
 					<< labelCost << ";"
 					<< confidence_ << ";"
@@ -1509,13 +1692,23 @@ void testMultiHomographyFitting(
 	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
 	printf("P-NAPSAC initialization time = %f secs.\n", elapsed_seconds.count());
 
+	progx::utils::DefaultHomographyEstimator estimator;
+	gcransac::sampler::UniformSampler uniformSampler(&points);
+	/*gcransac::sampler::ConnectedComponentSampler connectedComponentSampler(
+		&points,
+		estimator.sampleSize(),
+		20,
+		200,
+		5,
+		false);*/
+
 	// Applying Progressive-X
 	typedef progx::ProgressiveXPrime<
 		ClusteringMethod,
 		clustering::distances::TanimotoDistance<progx::ModelData>,
 		clustering::losses::MAGSACLoss<double, gcransac::utils::DefaultHomographyEstimator, 4>,
 		progx::utils::DefaultHomographyEstimator,
-		gcransac::sampler::ProgressiveNapsacSampler<4>> ProgXPrime;
+		gcransac::sampler::UniformSampler> ProgXPrime;
 
 	ProgXPrime progressiveXPrime;
 
@@ -1539,14 +1732,13 @@ void testMultiHomographyFitting(
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
 	progressiveXPrime.run(
 		points,
-		sampler,
+		uniformSampler,
 		models,
 		modelData);
 	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
 	elapsed_seconds = end - start; // The elapsed time in seconds
 	double time = elapsed_seconds.count();
 
-	progx::utils::DefaultHomographyEstimator estimator;
 	for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
 	{
 		size_t inlierNums = 0;
@@ -1618,10 +1810,10 @@ void testMultiHomographyFitting(
 			printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
 
 			saving_mutex.lock();
-			std::ofstream file("tuning.csv", std::fstream::app);
+			std::ofstream file("tuningHUniform.csv", std::fstream::app);
 			file << scene_name_ << ";"
 				<< "tanimoto" << ";"
-				<< "magsac" << ";"
+				<< "magsac + uni" << ";"
 				<< ClusteringMethod::getName() << ";"
 				<< spatialWeight << ";"
 				<< labelCost << ";"
