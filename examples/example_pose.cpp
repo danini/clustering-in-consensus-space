@@ -35,7 +35,9 @@
 #include <sys/stat.h>
 
 #include <gflags/gflags.h>
-#include "sophus/se3.hpp"
+#include <sophus/se3.hpp>
+
+#include "pose_averaging/openMVG.hpp"
 
 #include <mutex>
 
@@ -340,7 +342,7 @@ int main(int argc, char** argv)
 			relativePose.translation(),
 			pose.translation());
 
-		if (poseIdx < poses.size() - 1)
+		if (poseIdx < poses.size() - 2)
 			printf("%d. pose | Rotation error = %f degrees | Translation error = %f degrees.\n", 
 				poseIdx, rErr, tErr);
 		else
@@ -355,7 +357,7 @@ void poseAveraging(
 	const std::vector<Sophus::SE3d> &poses_,
 	Sophus::SE3d& estimatedPose_)
 {
-	// TODO
+	pose_averaging::poseAveraging_openMVG(poses_, estimatedPose_);
 }
 
 void estimateEssentialMatrix(

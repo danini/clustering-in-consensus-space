@@ -38,6 +38,7 @@
 #include <chrono>
 #include <random>
 #include <vector>
+#include <opencv2/opencv.hpp>
 
 #include <unsupported/Eigen/Polynomials>
 #include <Eigen/Eigen>
