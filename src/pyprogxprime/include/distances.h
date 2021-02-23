@@ -44,13 +44,6 @@ namespace clustering
 		class Distance 
 		{
 		public:
-			enum AssignmentType { Undefined, Soft, Hard };
-
-			static constexpr AssignmentType getAssignmentType()
-			{
-				return Undefined;
-			}
-
 			virtual double distance(
 				const _DataType& point1_,
 				const _DataType& point2_) const = 0;
@@ -61,11 +54,6 @@ namespace clustering
 		class TanimotoDistance : public Distance<_DataType>
 		{
 		public:
-			static constexpr AssignmentType getAssignmentType()
-			{
-				return Soft;
-			}
-
 			double distance(
 				const _DataType& point1_,
 				const _DataType& point2_) const
@@ -135,11 +123,6 @@ namespace clustering
 		class JaccardDistance : public Distance<_DataType>
 		{
 		public:
-			static constexpr AssignmentType getAssignmentType()
-			{
-				return Hard;
-			}
-
 			double distance(
 				const _DataType &point1_,
 				const _DataType &point2_) const

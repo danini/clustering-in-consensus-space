@@ -483,8 +483,8 @@ namespace progx
 				if (h_degenerate_sample)
 				{
 					// Declare a homography estimator to be able to calculate the residual and the homography from a non-minimal sample
-					static const estimator::RobustHomographyEstimator<estimator::solver::HomographyFourPointSolver, // The solver used for fitting a model to a minimal sample
-						estimator::solver::HomographyFourPointSolver> homography_estimator;
+					static const gcransac::estimator::RobustHomographyEstimator<gcransac::estimator::solver::HomographyFourPointSolver, // The solver used for fitting a model to a minimal sample
+						gcransac::estimator::solver::HomographyFourPointSolver> homography_estimator;
 
 					// The inliers of the homography
 					std::vector<size_t> homography_inliers;

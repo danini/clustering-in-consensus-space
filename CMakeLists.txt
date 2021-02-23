@@ -82,6 +82,8 @@ if (USE_OPENMP)
 	set(TRGT_LNK_LBS_ADDITIONAL OpenMP::OpenMP_CXX)
 endif (USE_OPENMP)
 
+find_package(Ceres REQUIRED)
+
 # ==============================================================================
 # Includes
 # ==============================================================================

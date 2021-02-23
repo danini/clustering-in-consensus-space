@@ -3,6 +3,7 @@
 #include <math.h>
 #include <random>
 #include <vector>
+#include <iostream>
 
 #include <opencv2/core/core.hpp>
 #include <Eigen/Eigen>
@@ -378,7 +379,7 @@ namespace pearl
 			if (sum_of_residuals_after < sum_of_residuals_before)
 			{
 				// Setting the descriptor of the new model.
-				models_->at(instance_idx).setDescriptor(current_models.back().descriptor); 
+				models_->at(instance_idx).descriptor = current_models.back().descriptor; 
 				// Something has been changed, thus, the labeling should run again.
 				changed_ = true; 
 			}

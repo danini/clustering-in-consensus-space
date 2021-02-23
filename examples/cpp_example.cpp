@@ -30,7 +30,9 @@
 #include "preemption_sprt.h"
 
 #include <ctime>
-#include <direct.h>
+#if defined(WIN32) || defined(_WIN32) || defined(__WIN32) && !defined(__CYGWIN__)
+	#include <direct.h>
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 
