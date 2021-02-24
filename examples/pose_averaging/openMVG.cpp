@@ -49,25 +49,29 @@ namespace pose_averaging {
     return false; // FAILURE
   }
 
-  bool rotationAveraging_openMVG(const std::vector<Sophus::SE3d>& poses_, Eigen::Matrix3d& rotationMatrix, std::vector<bool>& vec_inliers)
+  bool rotationAveraging_openMVG(const std::vector<Sophus::SE3d>& poses_, const std::vector<double>& weights, Eigen::Matrix3d& rotationMatrix, std::vector<bool>& vec_inliers)
   {
+    assert(poses_.size() == weights.size());
+
     using namespace openMVG;
     using namespace openMVG::sfm;
     using namespace openMVG::rotation_averaging;
     using namespace openMVG::rotation_averaging::l1;
 
     RelativeRotations vec_relatives_R;
-    // TODO
-    for (const auto& relative_pose : poses_) {
+    const int N = poses_.size();
+
+    for (int i = 0; i < N; ++i) {
+      const auto& relative_pose = poses_.at(i);
+      const auto& w = weights.at(i);
       // Add the relative rotation to the relative 'rotation' pose graph
       vec_relatives_R.emplace_back(
         0, 1,
         relative_pose.rotationMatrix(),
-        1.f);
+        w);
     }
 
     std::vector<Mat3> vec_globalR(2);
-
 
     //- Solve the global rotation estimation problem:
     const size_t nMainViewID = 0; //arbitrary choice
@@ -85,6 +89,12 @@ namespace pose_averaging {
       return true; // SUCCESS
     }
     return false; // FAILURE
+  }
+
+  bool rotationAveraging_openMVG(const std::vector<Sophus::SE3d>& poses_, Eigen::Matrix3d& rotationMatrix, std::vector<bool>& vec_inliers)
+  {
+    static const std::vector<double> weights(poses_.size(), 1.0);
+    return rotationAveraging_openMVG(poses_, weights, rotationMatrix, vec_inliers);
   }
 
   bool translationAveraging_naive(const std::vector<Sophus::SE3d>& poses_, const std::vector<bool>& vec_inliers, Eigen::Vector3d& t)

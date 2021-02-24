@@ -15,6 +15,13 @@ namespace pose_averaging {
 		Sophus::SE3d& estimatedPose_,
 		eTranslationAveragingMethod translationAvergaingMethod = eTranslationAveragingMethod::OpenMVG_L2);
 
+	// weighted rotation averaging
+	bool rotationAveraging_openMVG(
+		const std::vector<Sophus::SE3d>& poses_,
+		const std::vector<double>& weights,
+		Eigen::Matrix3d& rotationMatrix,
+		std::vector<bool>& vec_inliers);
+
 	bool rotationAveraging_openMVG(
 		const std::vector<Sophus::SE3d>& poses_,
 		Eigen::Matrix3d& rotationMatrix, 
