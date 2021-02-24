@@ -48,28 +48,41 @@
 
 #include "solver_homography_four_point.h"
 
-namespace progx
+namespace gcransac
 {
 	namespace estimator
 	{
 		// This is the estimator class for estimating a homography matrix between two images. A model estimation method and error calculation method are implemented
 		template<class _MinimalSolverEngine,  // The solver used for estimating the model from a minimal sample
-			class _NonMinimalSolverEngine> // The solver used for estimating the model from a non-minimal sample
-			class RobustHomographyEstimator : public gcransac::estimator::Estimator < cv::Mat, gcransac::Model >
+			class _NonMinimalSolverEngine, // The solver used for estimating the model from a non-minimal sample
+			size_t _EstimateFocalLength = 0> 
+			class GeneralizedHomographyEstimator : public Estimator < cv::Mat, Model >
 		{
 		protected:
 			// Minimal solver engine used for estimating a model from a minimal sample
-			const std::shared_ptr<_MinimalSolverEngine> minimal_solver;
+			std::shared_ptr<_MinimalSolverEngine> minimal_solver;
 
 			// Non-minimal solver engine used for estimating a model from a bigger than minimal sample
-			const std::shared_ptr<_NonMinimalSolverEngine> non_minimal_solver;
+			std::shared_ptr<_NonMinimalSolverEngine> non_minimal_solver;
+
+			std::vector<Eigen::Matrix<double, 3, 4>> generalizedCameraPoses;
+			size_t cameraNumber;
+			bool initialized;
 
 		public:
-			RobustHomographyEstimator() :
-				minimal_solver(std::make_shared<_MinimalSolverEngine>()), // Minimal solver engine used for estimating a model from a minimal sample
-				non_minimal_solver(std::make_shared<_NonMinimalSolverEngine>()) // Non-minimal solver engine used for estimating a model from a bigger than minimal sample
+			GeneralizedHomographyEstimator() :
+				initialized(false)
 			{}
-			~RobustHomographyEstimator() {}
+			~GeneralizedHomographyEstimator() {}
+
+			void setRigPoses(const std::vector<Eigen::Matrix<double, 3, 4>>& generalizedCameraPoses_)
+			{
+				initialized = true;
+				generalizedCameraPoses = generalizedCameraPoses_;
+				cameraNumber = generalizedCameraPoses_.size();
+				minimal_solver = std::make_shared<_MinimalSolverEngine>(generalizedCameraPoses, cameraNumber);
+				non_minimal_solver = std::make_shared<_NonMinimalSolverEngine>(generalizedCameraPoses, cameraNumber);
+			}
 
 			// The size of a non-minimal sample required for the estimation
 			static constexpr size_t nonMinimalSampleSize() {
@@ -78,9 +91,9 @@ namespace progx
 
 			// The size of a minimal sample required for the estimation
 			static constexpr bool needInitialModel() {
-				return false;
+				return _NonMinimalSolverEngine::needInitialModel();
 			}
-
+			
 			// The size of a minimal sample required for the estimation
 			static constexpr size_t sampleSize() {
 				return _MinimalSolverEngine::sampleSize();
@@ -91,27 +104,22 @@ namespace progx
 				return true;
 			}
 
+			static constexpr bool isGeneralizedHomography()
+			{
+				return true;
+			}
+
 			// The size of a minimal sample_ required for the estimation
 			static constexpr size_t maximumMinimalSolutions() {
 				return _MinimalSolverEngine::maximumSolutions();
 			}
 
-			_MinimalSolverEngine& getMutableMinimalSolver()
+			_MinimalSolverEngine &getMutableMinimalSolver()
 			{
 				return *minimal_solver;
 			}
 
-			const _MinimalSolverEngine& getMinimalSolver() const
-			{
-				return *minimal_solver;
-			}
-
-			_NonMinimalSolverEngine& getMutableNonMinimalSolver()
-			{
-				return *non_minimal_solver;
-			}
-
-			const _NonMinimalSolverEngine& getNonMinimalSolver() const
+			_NonMinimalSolverEngine &getMutableNonMinimalSolver()
 			{
 				return *non_minimal_solver;
 			}
@@ -125,53 +133,151 @@ namespace progx
 			OLGA_INLINE bool estimateModel(
 				const cv::Mat& data_, // The data points
 				const size_t *sample_, // The sample usd for the estimation
-				std::vector<gcransac::Model>* models_) const // The estimated model parameters
+				std::vector<Model>* models_) const // The estimated model parameters
 			{
-				return minimal_solver->estimateModel(data_, // The data points
+				if (!initialized)
+				{
+					fprintf(stderr, "The generalized camera's poses have not been set yet.");
+					return false;
+				}
+
+				std::vector<Model> models;
+				const bool success = minimal_solver->estimateModel(data_, // The data points
 					sample_, // The sample used for the estimation
 					sampleSize(), // The size of a minimal sample
-					*models_); // The estimated model parameters
+					models); // The estimated model parameters
+
+				if (!success)
+					return false;
+
+				models_->reserve(models.size());
+				for (const auto &model : models)
+				{
+					Model homography;
+					if constexpr (_EstimateFocalLength)
+					{
+						homography.descriptor = Eigen::MatrixXd(3, cameraNumber * 3 + 5);
+						homography.descriptor.block<3, 5>(0, 0) << model.descriptor;
+						const double &focalLength = homography.descriptor(0, 4);
+						Eigen::Matrix3d scaling = Eigen::Matrix3d::Identity();
+						scaling(0, 0) = 1.0 / focalLength;
+						scaling(1, 1) = 1.0 / focalLength;
+
+						for (size_t cameraIdx = 0; cameraIdx < cameraNumber; ++cameraIdx)
+						{
+							const Eigen::Matrix3d &rotation = generalizedCameraPoses[cameraIdx].block<3, 3>(0, 0);
+							const Eigen::Vector3d &translation = generalizedCameraPoses[cameraIdx].rightCols<1>();
+
+							// TODO(danini): translation won't work since c is needed. The only reason why it works now is that
+							// the camera rotation is identity.
+							homography.descriptor.block<3, 3>(0, 5 + cameraIdx * 3) <<
+								rotation * (model.descriptor.block<3, 3>(0, 0) +
+								(-translation) * model.descriptor.col(3).transpose()) *
+								scaling;
+						}
+					}
+					else
+					{
+						homography.descriptor = Eigen::MatrixXd(3, cameraNumber * 3 + 4);
+						homography.descriptor.block<3, 4>(0, 0) << model.descriptor;
+
+						for (size_t cameraIdx = 0; cameraIdx < cameraNumber; ++cameraIdx)
+						{
+							const Eigen::Matrix3d &rotation = generalizedCameraPoses[cameraIdx].block<3, 3>(0, 0);
+							const Eigen::Vector3d &translation = generalizedCameraPoses[cameraIdx].rightCols<1>();
+
+							// TODO(danini): translation won't work since c is needed. The only reason why it works now is that
+							// the camera rotation is identity.
+							homography.descriptor.block<3, 3>(0, 4 + cameraIdx * 3) <<
+								rotation * (model.descriptor.block<3, 3>(0, 0) +
+								(-translation) * model.descriptor.rightCols<1>().transpose());
+						}
+					}
+
+					models_->emplace_back(homography);
+				}
+
+				return true;
 			}
 
 			// Estimating the model from a non-minimal sample
 			OLGA_INLINE bool estimateModelNonminimal(const cv::Mat& data_, // The data points
 				const size_t *sample_, // The sample used for the estimation
 				const size_t &sample_number_, // The size of a minimal sample
-				std::vector<gcransac::Model>* models_,
+				std::vector<Model>* models_,
 				const double *weights_ = nullptr) const // The estimated model parameters
 			{
+				if (!initialized)
+				{
+					fprintf(stderr, "The generalized camera's poses have not been set yet.");
+					return false;
+				}
+
 				// Return of there are not enough points for the estimation
 				if (sample_number_ < nonMinimalSampleSize())
 					return false;
-
-				cv::Mat normalized_points(sample_number_, data_.cols, data_.type()); // The normalized point coordinates
-				Eigen::Matrix3d normalizing_transform_source, // The normalizing transformations in the source image
-					normalizing_transform_destination; // The normalizing transformations in the destination image
-
-				// Normalize the point coordinates to achieve numerical stability when
-				// applying the least-squares model fitting.
-				if (!normalizePoints(data_, // The data points
-					sample_, // The points to which the model will be fit
-					sample_number_, // The number of points
-					normalized_points, // The normalized point coordinates
-					normalizing_transform_source, // The normalizing transformation in the first image
-					normalizing_transform_destination)) // The normalizing transformation in the second image
-					return false;
+				
+				std::vector<Model> models;
+				if constexpr (needInitialModel())
+					models.emplace_back(models_->at(0));
+				
+				/*double sum1 = 0;
+				for (int i = 0; i < sample_number_; ++i)
+					sum1 += residual(data_.row(sample_[i]), models[0].descriptor);*/
 
 				// The four point fundamental matrix fitting algorithm
-				if (!non_minimal_solver->estimateModel(normalized_points,
-					nullptr,
+				if (!non_minimal_solver->estimateModel(data_,
+					sample_,
 					sample_number_,
-					*models_,
-					weights_,
-					normalizing_transform_source,
-					normalizing_transform_destination))
+					models,
+					weights_))
 					return false;
 
-				// Denormalizing the estimated fundamental matrices
-				const Eigen::Matrix3d normalizing_transform_destination_inverse = normalizing_transform_destination.inverse();
-				for (auto &model : *models_)
-					model.descriptor = normalizing_transform_destination_inverse * model.descriptor * normalizing_transform_source;
+				size_t offset = 4;
+				if constexpr (_EstimateFocalLength)
+					offset = 5;
+
+				models_->clear();
+				models_->reserve(models.size());
+				for (const auto &model : models)
+				{
+					Model homography;
+					homography.descriptor = Eigen::MatrixXd(3, cameraNumber * 3 + offset);
+					if constexpr (_EstimateFocalLength)
+						homography.descriptor.block<3, 5>(0, 0) << model.descriptor;
+					else
+						homography.descriptor.block<3, 4>(0, 0) << model.descriptor;
+
+					Eigen::Matrix3d scaling = Eigen::Matrix3d::Identity();
+					if constexpr (_EstimateFocalLength)
+					{
+						const double &focalLength = homography.descriptor(0, 4);
+						scaling(0, 0) = 1.0 / focalLength;
+						scaling(1, 1) = 1.0 / focalLength;
+					}
+
+					for (size_t cameraIdx = 0; cameraIdx < cameraNumber; ++cameraIdx)
+					{
+						const Eigen::Matrix3d &rotation = generalizedCameraPoses[cameraIdx].block<3, 3>(0, 0);
+						const Eigen::Vector3d &translation = generalizedCameraPoses[cameraIdx].rightCols<1>();
+
+						// TODO(danini): translation won't work since c is needed. The only reason why it works now is that
+						// the camera rotation is identity.
+						homography.descriptor.block<3, 3>(0, offset + cameraIdx * 3) <<
+							rotation * (model.descriptor.block<3, 3>(0, 0) +
+							(-translation) * model.descriptor.col(3).transpose()) * 
+							scaling;
+
+					}
+
+					/*double sum2 = 0;
+					for (int i = 0; i < sample_number_; ++i)
+						sum2 += residual(data_.row(sample_[i]), homography.descriptor);
+
+					printf("%f %f\n", sum1, sum2);*/
+
+					models_->emplace_back(homography);
+				}
 				return true;
 			}
 
@@ -186,23 +292,59 @@ namespace progx
 			{
 				const double* s = reinterpret_cast<double *>(point_.data);
 
-				const double &x1 = *s,
-					&y1 = *(s + 1),
-					&x2 = *(s + 2),
-					&y2 = *(s + 3);
+				const size_t cameraIdx = 
+					static_cast<size_t>(s[8]);
 
-				const double t1 = descriptor_(0, 0) * x1 + descriptor_(0, 1) * y1 + descriptor_(0, 2);
-				const double t2 = descriptor_(1, 0) * x1 + descriptor_(1, 1) * y1 + descriptor_(1, 2);
-				const double t3 = descriptor_(2, 0) * x1 + descriptor_(2, 1) * y1 + descriptor_(2, 2);
+				if (cameraIdx == 1)
+				{
+					//std::cout << "asd\n";
+				}
 
-				const double d1 = x2 - (t1 / t3);
-				const double d2 = y2 - (t2 / t3);
+				if constexpr (_EstimateFocalLength)
+				{
+					const Eigen::Matrix3d &homography =
+						descriptor_.block<3, 3>(0, 5 + 3 * cameraIdx);
+					const double &focalLength = descriptor_(0, 4);
 
-				return d1 * d1 + d2 * d2;
+					const double
+						&x1 = s[0],// / focalLength,
+						&y1 = s[1],// / focalLength,
+						&x2 = s[9],
+						&y2 = s[10];
+
+					const double t1 = homography(0, 0) * x1 + homography(0, 1) * y1 + homography(0, 2);
+					const double t2 = homography(1, 0) * x1 + homography(1, 1) * y1 + homography(1, 2);
+					const double t3 = homography(2, 0) * x1 + homography(2, 1) * y1 + homography(2, 2);
+
+					const double d1 = x2 - (t1 / t3);
+					const double d2 = y2 - (t2 / t3);
+
+					return d1 * d1 + d2 * d2;
+				}
+				else
+				{
+					const Eigen::Matrix3d &homography =
+						descriptor_.block<3, 3>(0, 4 + 3 * cameraIdx);
+
+					const double
+						&x1 = s[0],
+						&y1 = s[1],
+						&x2 = s[9],
+						&y2 = s[10];
+
+					const double t1 = homography(0, 0) * x1 + homography(0, 1) * y1 + homography(0, 2);
+					const double t2 = homography(1, 0) * x1 + homography(1, 1) * y1 + homography(1, 2);
+					const double t3 = homography(2, 0) * x1 + homography(2, 1) * y1 + homography(2, 2);
+
+					const double d1 = x2 - (t1 / t3);
+					const double d2 = y2 - (t2 / t3);
+
+					return d1 * d1 + d2 * d2;
+				}
 			}
 
 			OLGA_INLINE double residual(const cv::Mat& point_,
-				const gcransac::Model& model_) const
+				const Model& model_) const
 			{
 				return residual(point_, model_.descriptor);
 			}
@@ -330,8 +472,7 @@ namespace progx
 				const cv::Mat& data_, // All data points
 				const size_t *sample_) const // The indices of the selected points
 			{
-				if constexpr (sampleSize() != 4)
-					return true;
+				return true;
 
 				// The size of a minimal sample
 				constexpr size_t sample_size = sampleSize();
