@@ -9,6 +9,7 @@ option(USE_OPENMP "Use OPENMP" ON)
 option(CREATE_TRADITIONAL_TEST_PROJECT "Create the Project for the traditional multi-model tests." ON)
 option(CREATE_LINE_SEGMENT_PROJECT "Create the Project for the multi line segment tests." ON)
 option(CREATE_POSE_ESTIMATION_PROJECT "Create the Project for multi-homography to pose tests." ON)
+option(CREATE_GENERALIZED_HOMOGRAPHY_PROJECT "Create the Project for generalized multi-homography to pose tests." ON)
 
 SET (CMAKE_BUILD_TYPE "RELEASE")
 
@@ -207,6 +208,29 @@ if (CREATE_POSE_ESTIMATION_PROJECT)
 
 	add_executable(PoseGraphTests
 		examples/example_pose.cpp
+		examples/pose_averaging/openMVG.hpp
+		examples/pose_averaging/openMVG.cpp)
+		
+	target_link_libraries(PoseGraphTests PUBLIC
+		${PROJECT_NAME}
+		${OpenCV_LIBS}
+		Eigen3::Eigen
+		GraphCutRANSAC
+		gflags
+		#Sophus
+		OpenMVG::openMVG_sfm
+	)
+
+	add_dependencies(PoseGraphTests ${PROJECT_NAME})
+endif (CREATE_POSE_ESTIMATION_PROJECT)
+
+if (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
+	find_package(OpenMVG CONFIG REQUIRED)
+
+	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
+
+	add_executable(PoseGraphTests
+		examples/example_generalized_homography.cpp
 		examples/pose_averaging/openMVG.hpp
 		examples/pose_averaging/openMVG.cpp)
 		
