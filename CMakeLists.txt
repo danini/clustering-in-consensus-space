@@ -229,12 +229,12 @@ if (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
 
 	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
 
-	add_executable(PoseGraphTests
+	add_executable(GeneralizedHomographyTests
 		examples/example_generalized_homography.cpp
 		examples/pose_averaging/openMVG.hpp
 		examples/pose_averaging/openMVG.cpp)
 		
-	target_link_libraries(PoseGraphTests PUBLIC
+	target_link_libraries(GeneralizedHomographyTests PUBLIC
 		${PROJECT_NAME}
 		${OpenCV_LIBS}
 		Eigen3::Eigen
@@ -244,5 +244,5 @@ if (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
 		OpenMVG::openMVG_sfm
 	)
 
-	add_dependencies(PoseGraphTests ${PROJECT_NAME})
+	add_dependencies(GeneralizedHomographyTests ${PROJECT_NAME})
 endif (CREATE_POSE_ESTIMATION_PROJECT)
