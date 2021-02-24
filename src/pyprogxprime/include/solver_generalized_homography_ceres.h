@@ -34,6 +34,7 @@
 #pragma once
 
 #include "solver_engine.h"
+#include "pose_utils.h"
 #include "generalized_homography_estimator.h"
 #include <ceres/ceres.h>
 
@@ -44,7 +45,6 @@ namespace gcransac
 		namespace solver
 		{
 			// Non-linear optimization.
-			template <size_t _EstimateFocalLength = 0>
 			struct ReprojectionError {
 				ReprojectionError(double x, double y, double x_db, double y_db,
 					const Eigen::Matrix3d& K_, const Eigen::Matrix3d& R_,
@@ -79,14 +79,10 @@ namespace gcransac
 						data[4], data[5], data[6],
 						data[8], data[9], data[10];
 
-					T focalLength = static_cast<T>(1.0);
-					if constexpr (_EstimateFocalLength)
-						focalLength = static_cast<T>(data[12]);
-
 					Eigen::Matrix<T, 3, 3> H_cam = K.template cast<T>() * R.template cast<T>() * (H + c.template cast<T>() * N.transpose());
 					Eigen::Matrix<T, 3, 1> p;
-					p << static_cast<T>(p2D_q_x) / focalLength, 
-						static_cast<T>(p2D_q_y) / focalLength, 
+					p << static_cast<T>(p2D_q_x), 
+						static_cast<T>(p2D_q_y), 
 						static_cast<T>(1.0);
 					Eigen::Matrix<T, 3, 1> p2 = H_cam * p;
 
@@ -104,9 +100,6 @@ namespace gcransac
 					const Eigen::Matrix3d& K_,
 					const Eigen::Matrix3d& R_,
 					const Eigen::Vector3d& c_) {
-					if constexpr (_EstimateFocalLength)
-						return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 13>(
-							new ReprojectionError(x, y, x_db, y_db, K_, R_, c_)));
 					return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 12>(
 						new ReprojectionError(x, y, x_db, y_db, K_, R_, c_)));
 				}
@@ -122,7 +115,6 @@ namespace gcransac
 			};
 
 			// This is the estimator class for estimating a homography matrix between two images. A model estimation method and error calculation method are implemented
-			template <size_t _EstimateFocalLength = 0>
 			class GeneralizedHomographyCeresSolver : public SolverEngine
 			{
 			public:
@@ -184,8 +176,7 @@ namespace gcransac
 				const size_t cameraNumber;
 			};
 			
-			template <size_t _EstimateFocalLength>
-			void GeneralizedHomographyCeresSolver<_EstimateFocalLength>::decomposeGenHomography(
+			void GeneralizedHomographyCeresSolver::decomposeGenHomography(
 				const cv::Mat &data_,
 				const size_t *sample_,
 				const size_t &sampleSize_,
@@ -198,7 +189,7 @@ namespace gcransac
 				std::vector<Eigen::Vector3d> translations;
 				std::vector<Eigen::Vector3d> normals;
 
-				gcransac::utils::decomposeHomographyMatrix(
+				pose::decomposeHomographyMatrix(
 					homography_.block<3, 3>(0, 0),
 					Eigen::Matrix3d::Identity(),
 					Eigen::Matrix3d::Identity(),
@@ -279,8 +270,7 @@ namespace gcransac
 				t_ = translations[best_pose];
 			}
 
-			template <size_t _EstimateFocalLength>
-			OLGA_INLINE bool GeneralizedHomographyCeresSolver<_EstimateFocalLength>::estimateModel(
+			OLGA_INLINE bool GeneralizedHomographyCeresSolver::estimateModel(
 				const cv::Mat& data_,
 				const size_t *sample_,
 				size_t sample_number_,
@@ -289,35 +279,6 @@ namespace gcransac
 			{
 				const size_t kColumns = data_.cols;
 				const double *data_ptr = reinterpret_cast<double *>(data_.data);
-
-				/*Eigen::Matrix3d R;
-				Eigen::Vector3d t;
-				Eigen::Vector3d N =
-					models_[0].descriptor.col(3);
-				
-				decomposeGenHomography(
-					data_,
-					sample_,
-					sample_number_,
-					models_[0].descriptor.block<3, 3>(0, 0),
-					N,
-					R,
-					t);
-
-				double H[10];
-				Eigen::Quaterniond q(R);
-				q.normalize();
-				H[0] = q.w();
-				H[1] = q.x();
-				H[2] = q.y();
-				H[3] = q.z();
-
-				H[4] = t[0];
-				H[5] = t[1];
-				H[6] = t[2];
-				H[7] = N[0];
-				H[8] = N[1];
-				H[9] = N[2];*/
 
 				double H2[13];
 				H2[0] = models_[0].descriptor(0, 0);
@@ -332,8 +293,6 @@ namespace gcransac
 				H2[9] = models_[0].descriptor(2, 1);
 				H2[10] = models_[0].descriptor(2, 2);
 				H2[11] = models_[0].descriptor(2, 3);
-				if constexpr (_EstimateFocalLength)
-					H2[12] = models_[0].descriptor(0, 4);
 				
 				ceres::Problem refinement_problem;
 				const int kSampleSize = static_cast<int>(sample_number_);
@@ -350,7 +309,7 @@ namespace gcransac
 						point_ptr[8];
 
 					ceres::CostFunction* cost_function =
-						ReprojectionError<_EstimateFocalLength>::CreateCost(
+						ReprojectionError::CreateCost(
 							//point_ptr[9], point_ptr[10], point_ptr[0], point_ptr[1],
 							point_ptr[0], point_ptr[1], point_ptr[9], point_ptr[10],
 							Eigen::Matrix3d::Identity(),
@@ -368,22 +327,9 @@ namespace gcransac
 
 				if (summary.IsSolutionUsable() && 
 					summary.termination_type == ceres::CONVERGENCE) {
-					/*Eigen::Vector3d newN = Eigen::Vector3d(H[7], H[8], H[9]);
-
-					Eigen::Quaterniond qq(H[0], H[1], H[2], H[3]);
-					Eigen::Matrix3d newR;
-					newR = qq;
-					Eigen::Vector3d newt;
-					newt << H[4], H[5], H[6];
-
-					Eigen::Matrix3d newH = newR - newt * newN.transpose();*/
 
 					Homography model;
-					if constexpr (_EstimateFocalLength)
-						model.descriptor = Eigen::MatrixXd(3, 5);
-					else
-						model.descriptor = Eigen::MatrixXd(3, 4);
-					//model.descriptor << newH, newN;
+					model.descriptor.resize(3, 4);
 					
 					model.descriptor(0, 0)	= H2[0];
 					model.descriptor(0, 1)	= H2[1];
@@ -397,8 +343,6 @@ namespace gcransac
 					model.descriptor(2, 1)	= H2[9];
 					model.descriptor(2, 2)	= H2[10];
 					model.descriptor(2, 3)	= H2[11];
-					if constexpr (_EstimateFocalLength)
-						model.descriptor(0, 4) = H2[12];
 
 					models_.clear();
 					models_.emplace_back(model);

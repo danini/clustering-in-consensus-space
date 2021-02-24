@@ -45,6 +45,7 @@
 
 #include "modified_homography_estimator.h"
 #include "modified_fundamental_estimator.h"
+#include "modified_linear_model_estimator.h"
 #include "modified_solver_fundamental_matrix_seven_point.h"
 #include "modified_solver_homography_four_point.h"
 #include "solver_fundamental_matrix_eight_point.h"
@@ -74,6 +75,18 @@ namespace progx
 		typedef estimator::RobustHomographyEstimator<estimator::solver::HomographyFourPointSolver, // The solver used for fitting a model to a minimal sample
 			estimator::solver::HomographyFourPointSolver> // The solver used for fitting a model to a non-minimal sample
 			DefaultHomographyEstimator;
+			
+		// The default estimator for 2D line fitting
+		typedef estimator::LinearModelEstimator<gcransac::estimator::solver::LinearModelSolver<2>, // The solver used for fitting a model to a minimal sample
+			gcransac::estimator::solver::LinearModelSolver<2>,  // The solver used for fitting a model to a non-minimal sample
+			2> // The dimensionality of the problem
+			Default2DLineEstimator;
+
+		// The default estimator for 3D plane fitting
+		typedef estimator::LinearModelEstimator<gcransac::estimator::solver::LinearModelSolver<3>, // The solver used for fitting a model to a minimal sample
+			gcransac::estimator::solver::LinearModelSolver<3>,  // The solver used for fitting a model to a non-minimal sample
+			3> // The dimensionality of the problem
+			Default3DPlaneEstimator;
 
 		// The default estimator for essential matrix fitting
 		typedef gcransac::estimator::EssentialMatrixEstimator<gcransac::estimator::solver::EssentialMatrixFivePointSteweniusSolver, // The solver used for fitting a model to a minimal sample

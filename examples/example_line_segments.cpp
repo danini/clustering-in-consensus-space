@@ -82,8 +82,8 @@ typedef progx::ProgressiveXPrime<
 	progx::ModelData,
 	clustering::distances::TanimotoDistance<progx::ModelData>>,
 	clustering::distances::TanimotoDistance<progx::ModelData>,
-	clustering::losses::MAGSACLoss<double, gcransac::utils::Default2DLineEstimator, 2>,
-	gcransac::utils::Default2DLineEstimator,
+	clustering::losses::MAGSACLoss<double, progx::utils::Default2DLineEstimator, 2>,
+	progx::utils::Default2DLineEstimator,
 	gcransac::sampler::UniformSampler> ProgXPrime;
 
 void testMulti2DLineFitting(
@@ -170,7 +170,7 @@ void testMulti2DLineFitting(
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
 	gcransac::sampler::ProgressiveNapsacSampler<2> sampler(&points, // All data points
 		{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
-		gcransac::utils::Default2DLineEstimator::sampleSize(), // The size of a minimal sample
+		progx::utils::Default2DLineEstimator::sampleSize(), // The size of a minimal sample
 		{ static_cast<double>(256), // The width of the source image
 			static_cast<double>(256) }); // The height of the source image
 	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation

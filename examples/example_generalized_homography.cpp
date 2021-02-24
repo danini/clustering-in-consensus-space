@@ -8,26 +8,17 @@
 #include "GCRANSAC.h"
 #include "progx_utils.h"
 #include "losses.h"
+#include "utils.h"
 #include "progressive_x_prime.h"
-#include "median_shift_clustering.h"
 #include "mean_shift_clustering.h"
 #include "dbscan_clustering.h"
 #include "distances.h"
-#include "utils.h"
-#include "pose_utils.h"
-#include "modified_types.h"
 #include "GCoptimization.h"
 #include "uniform_generalized_sampler.h"
-#include "grid_neighborhood_graph.h"
-#include "flann_neighborhood_graph.h"
 #include "uniform_sampler.h"
 #include "prosac_sampler.h"
-#include "progressive_napsac_sampler.h"
 #include "modified_fundamental_estimator.h"
-#include "solver_homography_three_point.h"
 #include "modified_homography_estimator.h"
-#include "subspace4_estimator.h"
-#include "essential_estimator.h"
 #include "preemption_sprt.h"
 #include "generalized_homography_estimator.h"
 #include "solver_generalized_homography_ceres.h"
@@ -72,7 +63,7 @@ typedef clustering::density::DBScanClustering<
 // The default estimator for generalized homography fitting
 typedef gcransac::estimator::GeneralizedHomographyEstimator<
 	gcransac::estimator::solver::GeneralizedHomographyThreeTwoPointSolver, // The solver used for fitting a model to a minimal sample
-	gcransac::estimator::solver::GeneralizedHomographyCeresSolver<0>> // The solver used for fitting a model to a non-minimal sample
+	gcransac::estimator::solver::GeneralizedHomographyCeresSolver> // The solver used for fitting a model to a non-minimal sample
 	GeneralizedEstimator32;
 
 // The exact type of the multi-model fitting algorithm
