@@ -194,7 +194,7 @@ namespace progx
 			const cv::Mat& points_,
 			const std::vector<ModelData>& hypothesisData_,
 			const std::vector< std::vector<size_t> >& clusterIndices_,
-			std::vector<std::vector<size_t>>& clusterInliers_) const;
+			std::vector<std::pair<std::vector<size_t>, size_t>>& clusterInliers_) const;
 
 		void refitAndReplace(
 			std::vector<ModelData>& hypothesisData_,
@@ -202,7 +202,7 @@ namespace progx
 			const _ModelEstimator& estimator_,
 			const cv::Mat& points_,
 			const std::vector< std::vector<size_t> >& clusterIndices_,
-			const std::vector<std::vector<size_t>>& clusterInliers_) const;
+			const std::vector<std::pair<std::vector<size_t>, size_t>>& clusterInliers_) const;
 
 		bool generateHypotheses(
 			const cv::Mat& points_,
@@ -308,7 +308,7 @@ namespace progx
 					tmpClusterIndices);
 
 				// Select the inliers of the clusters
-				std::vector<std::vector<size_t>> clusterInliers;
+				std::vector<std::pair<std::vector<size_t>, size_t>> clusterInliers;
 				extractInliersFromClusters(
 					points_,
 					modelData_,
@@ -618,7 +618,7 @@ namespace progx
 		const _ModelEstimator& estimator_,
 		const cv::Mat& points_,
 		const std::vector< std::vector<size_t> >& clusterIndices_,
-		const std::vector<std::vector<size_t>>& clusterInliers_) const
+		const std::vector<std::pair<std::vector<size_t>, size_t>>& clusterInliers_) const
 	{
 		const size_t& kPointNumber = points_.rows;
 		const size_t& kClusterNumber = clusterIndices_.size();
@@ -631,10 +631,13 @@ namespace progx
 		// Iterate through the clusters
 		for (size_t clusterIdx = 0; clusterIdx < kClusterNumber; ++clusterIdx)
 		{
-			const std::vector<size_t>& currentInliers = clusterInliers_[clusterIdx];
+			const std::vector<size_t>& currentInliers = clusterInliers_[clusterIdx].first;
 
 			if (currentInliers.size() < estimator_.nonMinimalSampleSize())
 				continue;
+
+			if constexpr (_ModelEstimator::needInitialModel())
+				newHypotheses.emplace_back(hypotheses_[clusterInliers_[clusterIdx].second]);
 
 			// Estimate the model parameters using the current sample
 			if (!estimator_.estimateModelNonminimal(
@@ -731,6 +734,8 @@ namespace progx
 
 			// Estimate the model parameters using the current sample
 			tmpModel.clear();
+			if constexpr (_ModelEstimator::needInitialModel())
+				tmpModel.emplace_back(model_);
 			if (!estimator_.estimateModelNonminimal(
 				points_,  // All points
 				&inliers_[0], // The current sample
@@ -752,7 +757,7 @@ namespace progx
 		const cv::Mat& points_,
 		const std::vector<ModelData>& hypothesisData_,
 		const std::vector< std::vector<size_t> >& clusterIndices_,
-		std::vector<std::vector<size_t>> &clusterInliers_) const
+		std::vector<std::pair<std::vector<size_t>, size_t>> &clusterInliers_) const
 	{
 		const size_t& kPointNumber = points_.rows;
 		const size_t& kClusterNumber = clusterIndices_.size();
@@ -765,7 +770,7 @@ namespace progx
 		for (size_t clusterIdx = 0; clusterIdx < kClusterNumber; ++clusterIdx)
 		{
 			const auto& cluster = clusterIndices_[clusterIdx];
-			clusterInliers_[clusterIdx].reserve(kPointNumber);
+			clusterInliers_[clusterIdx].first.reserve(kPointNumber);
 
 			// An inlier is kept only if it appears this often
 			// If settings.inlierPassingThreshold = 0.5, this is the median.
@@ -798,11 +803,14 @@ namespace progx
 			}
 
 			if (largestHypothesisIdx > -1)
+			{
+				clusterInliers_[clusterIdx].second = largestHypothesisIdx;
 				for (const auto& inlierIdx : hypothesisData_[largestHypothesisIdx].inliers)
 				{
-					clusterInliers_[clusterIdx].emplace_back(inlierIdx);
+					clusterInliers_[clusterIdx].first.emplace_back(inlierIdx);
 					pointsAdded[inlierIdx] = true;
 				}
+			}
 
 			// Reset the vector
 			std::fill(std::begin(tmpPoints), std::end(tmpPoints), 0);

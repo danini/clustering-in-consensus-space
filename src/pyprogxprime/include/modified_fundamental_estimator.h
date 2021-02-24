@@ -117,6 +117,11 @@ namespace progx
 				return non_minimal_solver.get();
 			}
 
+			// The size of a minimal sample required for the estimation
+			static constexpr bool needInitialModel() {
+				return false;
+			}
+
 			// The size of a minimal sample_ required for the estimation
 			static constexpr size_t maximumMinimalSolutions() {
 				return _MinimalSolverEngine::maximumSolutions();

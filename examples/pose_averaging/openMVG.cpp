@@ -9,7 +9,7 @@ using namespace openMVG;
 
 namespace pose_averaging {
 
-
+    
   bool Translation_averaging(
     const std::vector<Sophus::SE3d>& poses_,
     const std::vector<bool>& vec_inliers,
@@ -293,5 +293,5 @@ namespace pose_averaging {
       t,
       openMVG::sfm::ETranslationAveragingMethod::TRANSLATION_AVERAGING_L2_DISTANCE_CHORDAL);
   }
-
+  
 }
