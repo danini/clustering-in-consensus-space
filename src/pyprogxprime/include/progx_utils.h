@@ -8,6 +8,10 @@
 #include <iterator>
 #include <iostream>
 #include <set>
+#include <chrono>
+#include <ctime>
+#include <utility>
+#include <iomanip>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -28,9 +32,20 @@ bool loadPointsWithLabels(
 	size_t& reference_model_number_,
 	const char* file_);
 
+inline std::string getCurrentDateAndTime(std::string format_);
+
 /*****************************************
 ************* Implementation *************
-*****************************************/
+*****************************************/	
+inline std::string getCurrentDateAndTime(std::string format_) {
+    auto current_time = std::chrono::system_clock::now();
+    std::time_t time_now_t = std::chrono::system_clock::to_time_t(current_time);
+
+    std::stringstream ss;
+    ss << std::put_time(std::localtime(&time_now_t), format_.c_str());
+    return ss.str();
+}
+
 bool loadPointsWithLabels(
 	cv::Mat& points_,
 	std::vector<int>& labels_,
