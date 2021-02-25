@@ -93,7 +93,7 @@ namespace pose_averaging {
 
   bool rotationAveraging_openMVG(const std::vector<Sophus::SE3d>& poses_, Eigen::Matrix3d& rotationMatrix, std::vector<bool>& vec_inliers)
   {
-    static const std::vector<double> weights(poses_.size(), 1.0);
+    std::vector<double> weights(poses_.size(), 1.0);
     return rotationAveraging_openMVG(poses_, weights, rotationMatrix, vec_inliers);
   }
 
