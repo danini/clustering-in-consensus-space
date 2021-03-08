@@ -333,6 +333,12 @@ namespace progx
 				if constexpr (sampleSize() != 4)
 					return true;
 
+				if (sample_[0] >= data_.rows ||
+					sample_[1] >= data_.rows ||
+					sample_[2] >= data_.rows ||
+					sample_[3] >= data_.rows)
+					return false;
+
 				// The size of a minimal sample
 				constexpr size_t sample_size = sampleSize();
 

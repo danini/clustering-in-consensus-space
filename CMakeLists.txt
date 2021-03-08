@@ -74,15 +74,6 @@ endif()
 # ==============================================================================
 # Find OpenMP
 # ==============================================================================
-find_package(OpenMP)
-if (USE_OPENMP)
-	if(NOT OPENMP_FOUND)
-		message(FATAL_ERROR "OPENMP not found.")
-	endif()
-	add_definitions(-DUSE_OPENMP)
-	set(TRGT_LNK_LBS_ADDITIONAL OpenMP::OpenMP_CXX)
-endif (USE_OPENMP)
-
 find_package(Ceres REQUIRED)
 
 # ==============================================================================
@@ -201,16 +192,12 @@ if (CREATE_LINE_SEGMENT_PROJECT)
 	add_dependencies(LineSegmentTests ${PROJECT_NAME})
 endif (CREATE_LINE_SEGMENT_PROJECT)
 
-find_package(OpenMVG CONFIG REQUIRED)
-
 if (CREATE_POSE_ESTIMATION_PROJECT)
 
 	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
 
 	add_executable(PoseGraphTests
-		examples/example_pose.cpp
-		examples/pose_averaging/openMVG.hpp
-		examples/pose_averaging/openMVG.cpp)
+		examples/example_pose.cpp)
 		
 	target_link_libraries(PoseGraphTests PUBLIC
 		${PROJECT_NAME}
@@ -218,7 +205,6 @@ if (CREATE_POSE_ESTIMATION_PROJECT)
 		Eigen3::Eigen
 		GraphCutRANSAC
 		gflags
-		OpenMVG::openMVG_sfm
 	)
 
 	add_dependencies(PoseGraphTests ${PROJECT_NAME})
@@ -229,9 +215,7 @@ if (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
 	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
 
 	add_executable(GeneralizedHomographyTests
-		examples/example_generalized_homography.cpp
-		examples/pose_averaging/openMVG.hpp
-		examples/pose_averaging/openMVG.cpp)
+		examples/example_generalized_homography.cpp)
 		
 	target_link_libraries(GeneralizedHomographyTests PUBLIC
 		${PROJECT_NAME}
@@ -239,7 +223,6 @@ if (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
 		Eigen3::Eigen
 		GraphCutRANSAC
 		gflags
-		OpenMVG::openMVG_sfm
 	)
 
 	add_dependencies(GeneralizedHomographyTests ${PROJECT_NAME})

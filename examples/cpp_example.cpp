@@ -179,13 +179,13 @@ int main(int argc, char** argv)
 	if (FLAGS_test_motion_fitting)
 	{
 		printf("Tuning multi-motion fitting.\n");
-		const std::vector<double> thresholds = { 0.0004, 0.0006, 0.0008, 0.001, 0.0025, 0.075, 0.01, 0.0125, 0.025, 0.05, 0.1, 0.5, 1.0 };
-		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85, 0.90 };
-		const std::vector<int> minimumPoints = { 5, 10, 15, 20 };
-		const std::vector<double> confidences = { /*0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
-		const std::vector<int> maximumIterations = { 10, 20, 50, 100, 150, 200 };
+		const std::vector<double> thresholds = { /*0.0004, 0.0006, 0.0008, 0.001, 0.0025, 0.075, 0.01,*/ 0.0125/*, 0.025, 0.05 /*, 0.1, 0.5, 1.0*/ };
+		const std::vector<double> tanimotoDistances = { /*0.1, 0.2, 0.75, 0.8,*/ 0.85, 0.90 };
+		const std::vector<int> minimumPoints = { 4, 5 /*, 10, 15, 20*/ };
+		const std::vector<double> confidences = { 0.9/*, 0.95, 0.99, 0.999, 0.9999, 0.99999*/ };
+		const std::vector<int> maximumIterations = { /*10, 20, 50, 100,*/ 150/*, 200*/ };
 		const std::vector<int> startingHypothesisNumber = { 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
-		const std::vector<int> addedHypothesisNumber = { 1, 2, 5, 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		const std::vector<int> addedHypothesisNumber = { /*1, 2, 5,*/ 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
 
 		std::vector<progx::MultiModelSettings> settings;
 
@@ -365,13 +365,13 @@ int main(int argc, char** argv)
 	{
 		printf("Tuning multi-homography fitting.\n");
 		std::vector<progx::MultiModelSettings> settings;
-		const std::vector<double> thresholds = { 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0 };
-		const std::vector<double> tanimotoDistances = { 0.75, 0.8, 0.85, 0.90 };
+		const std::vector<double> thresholds = { /*2.5, 3.0, 3.5, 4.0, 4.5,*/ 5.0/*, 6.0*/ };
+		const std::vector<double> tanimotoDistances = { 0.7, 0.75, 0.8 };
 		const std::vector<int> minimumPoints = { 20, 10, 15 };
 		const std::vector<double> confidences = { /*0.9, 0.95, 0.99, 0.9, 0.95, 0.99, 0.999,*/ 0.9999/*, 0.99999*/ };
-		const std::vector<int> maximumIterations = { 50, 75, 150, 100, 200 };
+		const std::vector<int> maximumIterations = { /*50, 75, 150,*/ 100 /*, 200, 300, 400*/ };
 		const std::vector<int> startingHypothesisNumber = { 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
-		const std::vector<int> addedHypothesisNumber = { 1, 5, 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
+		const std::vector<int> addedHypothesisNumber = { /*1, 5,*/ 10 /*, 5, 1, 25 /*, 50, 100, 150, 200, 250, 300, 500*/ };
 
 		for (int rep = 0; rep < FLAGS_repetitions; ++rep)
 			for (const auto& minimum_point_number : minimumPoints)
@@ -638,6 +638,22 @@ void testMultiMotionFitting(
 			progx::utils::DefaultLinearSubspaceEstimator,
 			gcransac::sampler::UniformSampler> ProgXPrime;
 
+		/*gcransac::sampler::GridBasedConnectedComponentSampler<5> sampler(&points,
+			progx::utils::DefaultLinearSubspaceEstimator::sampleSize(),
+			{ 64, 32, 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
+			progx::utils::DefaultHomographyEstimator::sampleSize(), // The size of a minimal sample
+			{ static_cast<double>(source_image.cols), // The width of the source image
+				static_cast<double>(source_image.rows), // The height of the source image
+				static_cast<double>(destination_image.cols), // The width of the destination image
+				static_cast<double>(destination_image.rows) }))*/
+
+		/*gcransac::sampler::ConnectedComponentSampler ccsampler(&points,
+			progx::utils::DefaultLinearSubspaceEstimator::sampleSize(),
+			0.01,
+			0.1,
+			5,
+			false);*/
+
 		ProgXPrime progressiveXPrime;
 
 		auto& settings = progressiveXPrime.getMutableSettings();
@@ -691,7 +707,7 @@ void testMultiMotionFitting(
 
 		// Get a labeling
 		for (double spatialWeight = 0.0; spatialWeight <= 1.0; spatialWeight += 0.1)
-			for (double labelCost = 0.0; labelCost <= 30.0; labelCost += 5)
+			for (double labelCost = 0.0; labelCost <= 20.0; labelCost += 1)
 			{
 				std::vector<size_t> labels;
 				std::vector<int> intLabels;
@@ -1266,10 +1282,18 @@ void testMultiHomographyFitting(
 	else if constexpr (std::is_same<gcransac::sampler::UniformSampler, _Sampler>())
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points));
 	else 
+		/*sampler = std::unique_ptr<_Sampler>(new _Sampler(&points,
+			estimator.sampleSize(),
+			{ 64, 32, 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
+			progx::utils::DefaultHomographyEstimator::sampleSize(), // The size of a minimal sample
+			{ static_cast<double>(source_image.cols), // The width of the source image
+				static_cast<double>(source_image.rows), // The height of the source image
+				static_cast<double>(destination_image.cols), // The width of the destination image
+				static_cast<double>(destination_image.rows) }));*/
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points,
 			estimator.sampleSize(),
 			20,
-			200,
+			1000,
 			5,
 			false));
 	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation

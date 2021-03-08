@@ -292,16 +292,6 @@ namespace progx
 			{
 				std::vector< std::vector<size_t> > tmpClusterIndices;
 
-				/*modelData_.resize(0);
-				modelData_.emplace_back(ModelData());
-				modelData_.emplace_back(ModelData());
-				modelData_.emplace_back(ModelData());
-				modelData_.emplace_back(ModelData());
-				modelData_[0].consensusVector = { 0, 0, 1, 1 };
-				modelData_[1].consensusVector = { 0, 0, 1, 1 };
-				modelData_[2].consensusVector = { 1, 1, 0, 0 };
-				modelData_[3].consensusVector = { 1, 1, 0, 0 };*/
-
 				clusteringObject->run(
 					settings.modelDistanceThreshold,
 					modelData_,
@@ -363,15 +353,7 @@ namespace progx
 			double theoreticalHypothesesNumber =
 				std::log(1.0 - settings.generationConfidence) / std::log(1.0 - std::pow((double)coveredPoints / kPointNumber, _ModelEstimator::sampleSize()));
 
-			//if (totalHypothesisNumber > theoreticalHypothesesNumber)
-			//	running = false;
-
-			//nextHypothesesNumber = theoreticalHypothesesNumber - totalHypothesisNumber;
-			/*MIN(
-				theoreticalHypothesesNumber - totalHypothesisNumber,
-				1.5 * nextHypothesesNumber);*/
-
-			nextHypothesesNumber = settings.addedHypothesisNumber; // 1.2 * nextHypothesesNumber;
+			nextHypothesesNumber = settings.addedHypothesisNumber; 
 
 			/*if (!running)
 			{
@@ -387,55 +369,26 @@ namespace progx
 			}*/
 		}
 
-		// Refit the models to the found inliers and replace the cluster elements by the new model parameters
-		/*for (size_t modelIdx = 0; modelIdx < models_.size(); ++modelIdx)
-		{
-			auto& model = models_[modelIdx];
-			auto& inliers = modelData_[modelIdx].inliers;
-
-			iterativelyReweightedLSQ(
-				points_, // All points
-				estimator, // The estimator 
-				model, // The current model parameters
-				inliers); // The current inlier set		
-		}*/
-
-		for (size_t modelIdx = 0; modelIdx < models_.size(); ++modelIdx)
-		{
-			size_t inlierNums = 0;
-			std::vector<gcransac::Model> refitModel;
-
-			if (modelData_[modelIdx].inliers.size() < kSampleNumber)
-				continue;
-
-			// Estimate the model parameters using the current sample
-			if (!estimatorObject->estimateModelNonminimal(
-				points_,  // All points
-				&(modelData_[modelIdx].inliers[0]), // The current sample
-				modelData_[modelIdx].inliers.size(),
-				&refitModel)) // The estimated model parameters
-				continue;
-
-			models_[modelIdx] = refitModel[0];
-
-			/*for (size_t pointIdx = 0; pointIdx < points_.rows; ++pointIdx)
+		if constexpr (!_ModelEstimator::needInitialModel())
+			for (size_t modelIdx = 0; modelIdx < models_.size(); ++modelIdx)
 			{
-				const double distance =
-					estimator2.squaredResidual(
-						points_.row(pointIdx),
-						models_[modelIdx]);
+				size_t inlierNums = 0;
+				std::vector<gcransac::Model> refitModel;
 
-				if (distance < settings.inlierOutlierThreshold * settings.inlierOutlierThreshold)
-				{
-					++inlierNums;
-				}
+				if (modelData_[modelIdx].inliers.size() < kSampleNumber)
+					continue;
+
+				// Estimate the model parameters using the current sample
+				if (!estimatorObject->estimateModelNonminimal(
+					points_,  // All points
+					&(modelData_[modelIdx].inliers[0]), // The current sample
+					modelData_[modelIdx].inliers.size(),
+					&refitModel)) // The estimated model parameters
+					continue;
+
+				models_[modelIdx] = refitModel[0];
 			}
-
-			std::cout << "Inliers = " << inlierNums << std::endl;*/
-		}
 	}
-
-
 
 	template<
 		class _Clustering, // The clustering algorithm used in the consensus space
@@ -646,7 +599,8 @@ namespace progx
 				currentInliers.size(),
 				&newHypotheses)) // The estimated model parameters
 			{
-				newHypotheses.emplace_back(hypotheses_[clusterIdx]);
+				if constexpr (!_ModelEstimator::needInitialModel())
+					newHypotheses.emplace_back(hypotheses_[clusterIdx]);
 				newHypothesisData.emplace_back(hypothesisData_[clusterIdx]);
 				continue;
 			}
@@ -654,12 +608,30 @@ namespace progx
 			newHypothesisData.resize(newHypothesisData.size() + 1);
 			auto& currentData = newHypothesisData.back();
 
-			// Calculate the consensus set of the current hypothesis
-			iterativelyReweightedLSQ(
-				points_, // All points
-				estimator_, // The estimator 
-				newHypotheses.back(), // The current model parameters
-				currentData.inliers); // The current inlier set			
+			// If the non-minimal fitting algorithm requires an initial model that means in our case that it is 
+			// a numerical optimization by, e.g., Ceres. In this particular case, IRLS is not needed, we only
+			// have to reselect the inliers using the updated model parameters
+			if constexpr (_ModelEstimator::needInitialModel())
+			{
+				// Selecting the model's new inliers
+				progx::Score score = scoringFunction->getScore(
+					points_, // All points
+					newHypotheses.back(), // The current model parameters
+					estimator_, // The estimator 
+					settings.inlierOutlierThreshold, // The current threshold
+					currentData.inliers, // The current inlier set
+					progx::Score(), // The score of the current so-far-the-best model
+					true); // Flag to decide if the inliers are needed
+			}
+			else
+			{
+				// Apply iteratively re-weighted least-squares fitting to improve the model parameters and find their inliers
+				iterativelyReweightedLSQ(
+					points_, // All points
+					estimator_, // The estimator 
+					newHypotheses.back(), // The current model parameters
+					currentData.inliers); // The current inlier set			
+			}
 
 			// Initialize the consensus vector
 			currentData.consensusVector.resize(kPointNumber, 0);
@@ -742,7 +714,7 @@ namespace progx
 				inliers_.size(),
 				&tmpModel, // The estimated model parameters
 				&weights[0]))
-				continue;
+				break;
 		}
 	}
 

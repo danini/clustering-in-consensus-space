@@ -219,7 +219,7 @@ namespace gcransac
 				
 				std::vector<Model> models;
 				if constexpr (needInitialModel())
-					models.emplace_back(models_->at(0));
+					models.emplace_back(models_->back());
 				
 				/*double sum1 = 0;
 				for (int i = 0; i < sample_number_; ++i)
@@ -237,16 +237,14 @@ namespace gcransac
 				if constexpr (_EstimateFocalLength)
 					offset = 5;
 
-				models_->clear();
-				models_->reserve(models.size());
 				for (const auto &model : models)
 				{
 					Model homography;
 					homography.descriptor = Eigen::MatrixXd(3, cameraNumber * 3 + offset);
 					if constexpr (_EstimateFocalLength)
-						homography.descriptor.block<3, 5>(0, 0) << model.descriptor;
+						homography.descriptor.block<3, 5>(0, 0) << model.descriptor.block<3, 5>(0, 0);
 					else
-						homography.descriptor.block<3, 4>(0, 0) << model.descriptor;
+						homography.descriptor.block<3, 4>(0, 0) << model.descriptor.block<3, 4>(0, 0);
 
 					Eigen::Matrix3d scaling = Eigen::Matrix3d::Identity();
 					if constexpr (_EstimateFocalLength)
@@ -276,7 +274,9 @@ namespace gcransac
 
 					printf("%f %f\n", sum1, sum2);*/
 
-					models_->emplace_back(homography);
+					models_->back() = homography;
+
+					//models_->emplace_back(homography);
 				}
 				return true;
 			}

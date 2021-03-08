@@ -47,7 +47,7 @@ DEFINE_string(data_path, "d:/Kutatas/ProgressiveXPrime/matlab/multilinesegment/d
 	"The folder where the images are stored.");
 DEFINE_string(statistics_path, "lineSegmentResults.csv",
 	"The folder where the results are saved in .csv format.");
-DEFINE_int32(number_of_test_images, 321,
+DEFINE_int32(number_of_test_images, 400,
 	"The number of test scenes in the folder.");
 DEFINE_bool(draw_results, true,
 	"A flag determining if the results should be drawn and shown.");
@@ -115,7 +115,7 @@ int main(int argc, char** argv)
 		FLAGS_threshold, FLAGS_minimum_point_number, FLAGS_maximum_iterations, FLAGS_confidence, FLAGS_model_to_model_distance, FLAGS_starting_hypothesis_number, FLAGS_added_hypothesis_number);
 
 #pragma omp parallel for num_threads(FLAGS_core_number)
-	for (size_t imageIdx = 1; imageIdx <= FLAGS_number_of_test_images; ++imageIdx)
+	for (int imageIdx = 1; imageIdx <= FLAGS_number_of_test_images; ++imageIdx)
 	{
 		const std::string data_path =
 			FLAGS_data_path + "point2d_" + std::to_string(imageIdx) + ".txt";
@@ -165,17 +165,35 @@ void testMulti2DLineFitting(
 		groundTruthPolygon,
 		ground_truth_path_.c_str());
 
+	if (points.rows < 2)
+		return;
+
 	// The main sampler is used inside the local optimization
 	std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
 	gcransac::sampler::ProgressiveNapsacSampler<2> sampler(&points, // All data points
-		{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
+		{ 100, 90, 80, 70, 64, 60, 56, 50, 46, 32, 24, 16, 12, 8, 6, 4, 3, 2 },
 		progx::utils::Default2DLineEstimator::sampleSize(), // The size of a minimal sample
 		{ static_cast<double>(256), // The width of the source image
 			static_cast<double>(256) }); // The height of the source image
 	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
 	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
 	printf("P-NAPSAC initialization time = %f secs.\n", elapsed_seconds.count());
+
+	/*gcransac::sampler::ConnectedComponentSampler connectedComponentSampler(
+		&points,
+		minimum_point_number_,
+		50, 
+		500,
+		4,
+		false);*/
+	gcransac::sampler::GridBasedConnectedComponentSampler<2> connectedComponentSampler(
+		&points,
+		minimum_point_number_,
+		{ 100, 90, 80, 70, 64, 60, 56, 50, 46, 32, 24, 16, 12, 8, 6, 4, 3, 2 },
+		progx::utils::Default2DLineEstimator::sampleSize(), // The size of a minimal sample
+		{ static_cast<double>(256), // The width of the source image
+			static_cast<double>(256) });
 
 	gcransac::sampler::UniformSampler uniform_sampler(&points);
 
@@ -265,6 +283,7 @@ void testMulti2DLineFitting(
 		}
 	}
 
+	savingMutex.lock();
 	if (models.size() > 0)
 	{
 		// Calculate the error from the ground truth
@@ -313,7 +332,6 @@ void testMulti2DLineFitting(
 		printf("The mean error is %f px.\n", meanError);
 		printf("The processing time is %f secs.\n", time);
 
-		savingMutex.lock();
 		std::ofstream file(FLAGS_statistics_path, std::fstream::app);
 		file <<
 			inlier_outlier_threshold_ << ";" <<
@@ -326,11 +344,9 @@ void testMulti2DLineFitting(
 			meanError << ";" <<
 			time << ";" <<
 			models.size() << "\n";
-		savingMutex.unlock();
 	}
 	else
 	{
-		savingMutex.lock();
 		std::ofstream file(FLAGS_statistics_path, std::fstream::app);
 		file <<
 			inlier_outlier_threshold_ << ";" <<
@@ -343,8 +359,8 @@ void testMulti2DLineFitting(
 			std::numeric_limits<double>::max() << ";" <<
 			time << ";" <<
 			models.size() << "\n";
-		savingMutex.unlock();
 	}
+	savingMutex.unlock();
 
 	if (visualize_results_)
 	{

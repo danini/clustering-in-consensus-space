@@ -34,7 +34,6 @@
 #pragma once
 
 #include "solver_engine.h"
-#include "pose_utils.h"
 #include "generalized_homography_estimator.h"
 #include <ceres/ceres.h>
 
@@ -45,8 +44,9 @@ namespace gcransac
 		namespace solver
 		{
 			// Non-linear optimization.
-			struct ReprojectionError {
-				ReprojectionError(double x, double y, double x_db, double y_db,
+			template <size_t _EstimateFocalLength = 0>
+			struct SampsonError {
+				SampsonError(double x, double y, double x_db, double y_db,
 					const Eigen::Matrix3d& K_, const Eigen::Matrix3d& R_,
 					const Eigen::Vector3d& c_)
 					: p2D_q_x(x),
@@ -55,7 +55,7 @@ namespace gcransac
 					p2D_db_y(y_db) {
 					K = K_;
 					R = R_;
-					c = -c_;
+					c = c_;
 				}
 
 				template <typename T>
@@ -63,34 +63,65 @@ namespace gcransac
 					// The first four entries encode the rotation matrix as a quaternion, the
 					// next three entries correspond to the translation, the last three entries
 					// correspond to N.
-					/*Eigen::Quaternion<T> q(data[0], data[1], data[2], data[3]);
+					Eigen::Quaternion<T> q(data[0], data[1], data[2], data[3]);
 					q.normalize();
-					Eigen::Matrix<T, 3, 3> R_H(q);
+					Eigen::Matrix<T, 3, 3> Rcurr(q);
 					Eigen::Matrix<T, 3, 1> t;
-					t << data[4], data[5], data[6];*/
+					t << data[4], data[5], data[6];
 
-					Eigen::Matrix<T, 3, 1> N;
-					N << data[3], data[7], data[11];
+					Eigen::Matrix<T, 3, 1> cameraTranslation =
+						R.template cast<T>() * c.template cast<T>() + t;
 
-					// Recreates the homography.
-					Eigen::Matrix<T, 3, 3> H;
-					//H = R_H - t * N.transpose();*/
-					H << data[0], data[1], data[2],
-						data[4], data[5], data[6],
-						data[8], data[9], data[10];
+					T focalLength = static_cast<T>(1.0);
+					if constexpr (_EstimateFocalLength)
+						focalLength = static_cast<T>(data[7]);
 
-					Eigen::Matrix<T, 3, 3> H_cam = K.template cast<T>() * R.template cast<T>() * (H + c.template cast<T>() * N.transpose());
+					const T zero = static_cast<T>(0);
+
+					// The cross product matrix of the translation vector
+					Eigen::Matrix<T, 3, 3> cross_prod_t;
+					cross_prod_t << zero, -cameraTranslation(2), cameraTranslation(1),
+						cameraTranslation(2), zero, -cameraTranslation(0),
+						-cameraTranslation(1), cameraTranslation(0), zero;
+
+					Eigen::Matrix<T, 3, 3> E =
+						cross_prod_t *
+						R.template cast<T>() * Rcurr;
+					
 					Eigen::Matrix<T, 3, 1> p;
-					p << static_cast<T>(p2D_q_x), 
-						static_cast<T>(p2D_q_y), 
-						static_cast<T>(1.0);
-					Eigen::Matrix<T, 3, 1> p2 = H_cam * p;
+					p << static_cast<T>(p2D_q_x), static_cast<T>(p2D_q_y), static_cast<T>(1.0);
 
-					T x_proj = p2[0] / p2[2];
-					T y_proj = p2[1] / p2[2];
+					const T
+						x1 = static_cast<T>(p2D_q_x) / focalLength,
+						y1 = static_cast<T>(p2D_q_y) / focalLength,
+						x2 = static_cast<T>(p2D_db_x),
+						y2 = static_cast<T>(p2D_db_y);
 
-					residuals[0] = /*pow(*/static_cast<T>(p2D_db_x) - x_proj;//, static_cast<T>(2));
-					residuals[1] = /*pow(*/static_cast<T>(p2D_db_y) - y_proj;// , static_cast<T>(2));
+					const T
+						&e11 = E(0, 0),
+						&e12 = E(0, 1),
+						&e13 = E(0, 2),
+						&e21 = E(1, 0),
+						&e22 = E(1, 1),
+						&e23 = E(1, 2),
+						&e31 = E(2, 0),
+						&e32 = E(2, 1),
+						&e33 = E(2, 2);
+
+					T rxc = e11 * x2 + e21 * y2 + e31;
+					T ryc = e12 * x2 + e22 * y2 + e32;
+					T rwc = e13 * x2 + e23 * y2 + e33;
+					T r = (x1 * rxc + y1 * ryc + rwc);
+					T rx = e11 * x1 + e12 * y1 + e13;
+					T ry = e21 * x1 + e22 * y1 + e23;
+
+					residuals[0] = r * r /
+						(rxc * rxc + ryc * ryc + rx * rx + ry * ry);
+
+					T a = rxc * rxc + ryc * ryc;
+					T b = rx * rx + ry * ry;
+
+					residuals[1] = r * r * (a + b) / (a * b);
 					return true;
 				}
 
@@ -100,8 +131,11 @@ namespace gcransac
 					const Eigen::Matrix3d& K_,
 					const Eigen::Matrix3d& R_,
 					const Eigen::Vector3d& c_) {
-					return (new ceres::AutoDiffCostFunction<ReprojectionError, 2, 12>(
-						new ReprojectionError(x, y, x_db, y_db, K_, R_, c_)));
+					if constexpr (_EstimateFocalLength)
+						return (new ceres::AutoDiffCostFunction<SampsonError, 2, 8>(
+							new SampsonError(x, y, x_db, y_db, K_, R_, c_)));
+					return (new ceres::AutoDiffCostFunction<SampsonError, 2, 7>(
+						new SampsonError(x, y, x_db, y_db, K_, R_, c_)));
 				}
 
 				// Assumes that the measurement is centered around the principal point.
@@ -115,10 +149,11 @@ namespace gcransac
 			};
 
 			// This is the estimator class for estimating a homography matrix between two images. A model estimation method and error calculation method are implemented
-			class GeneralizedHomographyCeresSolver : public SolverEngine
+			template <size_t _EstimateFocalLength = 0>
+			class GeneralizedEssentialMatrixCeresSolver : public SolverEngine
 			{
 			public:
-				GeneralizedHomographyCeresSolver(
+				GeneralizedEssentialMatrixCeresSolver(
 					const std::vector<Eigen::Matrix<double, 3, 4>> &generalizedCameraPoses_,
 					const size_t cameraNumber_) :
 					generalizedCameraPoses(generalizedCameraPoses_),
@@ -126,7 +161,7 @@ namespace gcransac
 				{
 				}
 
-				~GeneralizedHomographyCeresSolver()
+				~GeneralizedEssentialMatrixCeresSolver()
 				{
 				}
 
@@ -150,7 +185,7 @@ namespace gcransac
 				// The minimum number of points required for the estimation
 				static constexpr size_t sampleSize()
 				{
-					return 5;
+					return 6;
 				}
 
 				// Estimate the model parameters from the given point sample
@@ -161,116 +196,14 @@ namespace gcransac
 					size_t sample_number_, // The size of the sample
 					std::vector<Model> &models_, // The estimated model parameters
 					const double *weights_ = nullptr) const; // The weight for each point
-				
-				void GeneralizedHomographyCeresSolver::decomposeGenHomography(
-					const cv::Mat &data_,
-					const size_t *sample_,
-					const size_t &sampleSize_,
-					const Eigen::Matrix3d &homography_,
-					Eigen::Vector3d &N_,
-					Eigen::Matrix3d &R_,
-					Eigen::Vector3d &t_) const;
 
 			protected:
 				const std::vector<Eigen::Matrix<double, 3, 4>> generalizedCameraPoses;
 				const size_t cameraNumber;
 			};
-			
-			void GeneralizedHomographyCeresSolver::decomposeGenHomography(
-				const cv::Mat &data_,
-				const size_t *sample_,
-				const size_t &sampleSize_,
-				const Eigen::Matrix3d &homography_,
-				Eigen::Vector3d &N_,
-				Eigen::Matrix3d &R_,
-				Eigen::Vector3d &t_) const 
-			{
-				std::vector<Eigen::Matrix3d> rotations;
-				std::vector<Eigen::Vector3d> translations;
-				std::vector<Eigen::Vector3d> normals;
 
-				pose::decomposeHomographyMatrix(
-					homography_.block<3, 3>(0, 0),
-					Eigen::Matrix3d::Identity(),
-					Eigen::Matrix3d::Identity(),
-					rotations,
-					translations,
-					normals);
-
-				//extract_original_pose(N_, homography_, &rotations, &translations);
-				int num_solutions = static_cast<int>(rotations.size());
-				if (num_solutions == 0) return;
-
-				double best_score = std::numeric_limits<double>::max();
-				int best_num_consistent = 0;
-				int best_pose = 0;
-
-				for (int i = 0; i < num_solutions; ++i) 
-				{
-					int num_consistent = 0;
-					double score = 0.0;
-
-					// Performs a cheirality check.
-					for (int j = 0; j < sampleSize_; ++j)
-					{
-						const int kIdx = sample_[j];
-
-						const double
-							&x1 = data_.at<double>(kIdx, 0),
-							&y1 = data_.at<double>(kIdx, 1),
-							&x2 = data_.at<double>(kIdx, 9),
-							&y2 = data_.at<double>(kIdx, 10);
-						
-						const int cameraIdx =
-							data_.at<double>(kIdx, 8);
-						
-						Eigen::Vector2d p2D_db, p2D_q;
-						p2D_db << x2, y2;
-						p2D_q << x1, y1;
-
-						// Computes the closest point on one line to the second one, then checks
-						// if the point is in front of both cameras.
-						// See https://en.wikipedia.org/wiki/Skew_lines#Nearest_Points for details.
-						Eigen::Vector3d p1 = translations[i];
-						Eigen::Vector3d d1 = rotations[i] * p2D_q.homogeneous();
-						d1.normalize();
-						Eigen::Vector3d p2;
-						p2 << data_.at<double>(kIdx, 5), data_.at<double>(kIdx, 6), data_.at<double>(kIdx, 7);
-
-						Eigen::Vector3d d2;
-						d2 << data_.at<double>(kIdx, 2), data_.at<double>(kIdx, 3), data_.at<double>(kIdx, 4);
-						d2.normalize();
-
-						Eigen::Vector3d n1 = d1.cross(d2);
-						Eigen::Vector3d n2 = d2.cross(n1);
-
-						Eigen::Vector3d c1 = p1 + (p2 - p1).dot(n2) / (d1.dot(n2)) * d1;
-						double error = 3*3;
-
-						if ((d1.dot(c1 - p1) > 0.0) && (d2.dot(c1 - p2) > 0.0)) {
-							Eigen::Vector3d p = (generalizedCameraPoses[cameraIdx].block<3,3>(0,0) * (c1 - generalizedCameraPoses[cameraIdx].col(3)));
-							if (p[2] > 0.0) {
-								error = MIN((p.hnormalized() - p2D_db).squaredNorm(), error);
-								++num_consistent;
-							}
-						}
-
-						score += error;
-					}
-
-					if (score < best_score) {
-						best_num_consistent = num_consistent;
-						best_pose = i;
-						best_score = score;
-					}
-				}
-
-			//	N_ = normals[best_pose];
-				R_ = rotations[best_pose];
-				t_ = translations[best_pose];
-			}
-
-			OLGA_INLINE bool GeneralizedHomographyCeresSolver::estimateModel(
+			template <size_t _EstimateFocalLength>
+			OLGA_INLINE bool GeneralizedEssentialMatrixCeresSolver<_EstimateFocalLength>::estimateModel(
 				const cv::Mat& data_,
 				const size_t *sample_,
 				size_t sample_number_,
@@ -280,19 +213,23 @@ namespace gcransac
 				const size_t kColumns = data_.cols;
 				const double *data_ptr = reinterpret_cast<double *>(data_.data);
 
-				double H2[13];
-				H2[0] = models_[0].descriptor(0, 0);
-				H2[1] = models_[0].descriptor(0, 1);
-				H2[2] = models_[0].descriptor(0, 2);
-				H2[3] = models_[0].descriptor(0, 3);
-				H2[4] = models_[0].descriptor(1, 0);
-				H2[5] = models_[0].descriptor(1, 1);
-				H2[6] = models_[0].descriptor(1, 2);
-				H2[7] = models_[0].descriptor(1, 3);
-				H2[8] = models_[0].descriptor(2, 0);
-				H2[9] = models_[0].descriptor(2, 1);
-				H2[10] = models_[0].descriptor(2, 2);
-				H2[11] = models_[0].descriptor(2, 3);
+				const Eigen::Matrix3d &R = 
+					models_[0].descriptor.block<3, 3>(0, 0);
+				const Eigen::Vector3d &t =
+					models_[0].descriptor.col(3);
+				
+				double E[8];
+				Eigen::Quaterniond q(R);
+				q.normalize();
+				E[0] = q.w();
+				E[1] = q.x();
+				E[2] = q.y();
+				E[3] = q.z();
+				E[4] = t[0];
+				E[5] = t[1];
+				E[6] = t[2];
+				if constexpr (_EstimateFocalLength)
+					E[7] = models_[0].descriptor(0, 4);
 				
 				ceres::Problem refinement_problem;
 				const int kSampleSize = static_cast<int>(sample_number_);
@@ -309,42 +246,43 @@ namespace gcransac
 						point_ptr[8];
 
 					ceres::CostFunction* cost_function =
-						ReprojectionError::CreateCost(
+						SampsonError<_EstimateFocalLength>::CreateCost(
 							//point_ptr[9], point_ptr[10], point_ptr[0], point_ptr[1],
 							point_ptr[0], point_ptr[1], point_ptr[9], point_ptr[10],
 							Eigen::Matrix3d::Identity(),
 							generalizedCameraPoses[cameraIdx].block<3, 3>(0, 0),
 							generalizedCameraPoses[cameraIdx].rightCols<1>());
 
-					refinement_problem.AddResidualBlock(cost_function, nullptr, H2);
+					refinement_problem.AddResidualBlock(cost_function, nullptr, E);
 				}
 
 				ceres::Solver::Options options;
-
 				options.linear_solver_type = ceres::DENSE_QR;
 				options.minimizer_progress_to_stdout = false;
-				options.max_num_iterations = 50;
 				ceres::Solver::Summary summary;
 				ceres::Solve(options, &refinement_problem, &summary);
 
-				if (summary.IsSolutionUsable() && 
+				if (summary.IsSolutionUsable() &&
 					summary.termination_type == ceres::CONVERGENCE) {
 
-					Homography model;
-					model.descriptor.resize(3, 4);
+					Eigen::Quaterniond qq(E[0], E[1], E[2], E[3]);
+					Eigen::Matrix3d newR;
+					newR = qq;
+					Eigen::Vector3d newt;
+					newt << E[4], E[5], E[6];
+
+
+					Model model;
+					if constexpr (_EstimateFocalLength)
+						model.descriptor = Eigen::MatrixXd(3, 5);
+					else
+						model.descriptor = Eigen::MatrixXd(3, 4);
 					
-					models_[0].descriptor(0, 0)	= H2[0];
-					models_[0].descriptor(0, 1)	= H2[1];
-					models_[0].descriptor(0, 2)	= H2[2];
-					models_[0].descriptor(0, 3)	= H2[3];
-					models_[0].descriptor(1, 0)	= H2[4];
-					models_[0].descriptor(1, 1)	= H2[5];
-					models_[0].descriptor(1, 2)	= H2[6];
-					models_[0].descriptor(1, 3)	= H2[7];
-					models_[0].descriptor(2, 0)	= H2[8];
-					models_[0].descriptor(2, 1)	= H2[9];
-					models_[0].descriptor(2, 2)	= H2[10];
-					models_[0].descriptor(2, 3)	= H2[11];
+					model.descriptor.block<3, 4>(0, 0) << newR, newt;
+					if constexpr (_EstimateFocalLength)
+						model.descriptor(0, 4) = E[7];
+					models_.clear();
+					models_.emplace_back(model);
 				}
 				else
 					return false;
