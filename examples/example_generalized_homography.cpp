@@ -363,10 +363,10 @@ void processFramePair(
 	// Calculating the ground truth relative pose
 	Sophus::SE3d relativePose = 
 		groundTruthPoses_[frameDestination_] * groundTruthPoses_[frameSource_].inverse();
-	Eigen::Vector3d t;
-	t << 0, 0, 1;
-	t *= (groundTruthPoses_[frameDestination_].translation() - groundTruthPoses_[frameSource_].translation()).norm();
-	relativePose = Sophus::SE3d(relativePose.rotationMatrix(), t);
+	// Eigen::Vector3d t;
+	// t << 0, 0, 1;
+	// t *= (groundTruthPoses_[frameDestination_].translation() - groundTruthPoses_[frameSource_].translation()).norm();
+	// relativePose = Sophus::SE3d(relativePose.rotationMatrix(), t);
 
 	// The estimated relative pose
 	Sophus::SE3d estimatedPose;
