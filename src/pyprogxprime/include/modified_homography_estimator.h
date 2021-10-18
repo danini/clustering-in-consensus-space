@@ -43,10 +43,10 @@
 #include <unsupported/Eigen/Polynomials>
 #include <Eigen/Eigen>
 
-#include "estimator.h"
+#include "estimators/estimator.h"
 #include "model.h"
 
-#include "solver_homography_four_point.h"
+#include "estimators/solver_homography_four_point.h"
 
 namespace progx
 {

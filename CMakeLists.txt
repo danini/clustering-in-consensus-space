@@ -10,6 +10,7 @@ option(CREATE_TRADITIONAL_TEST_PROJECT "Create the Project for the traditional m
 option(CREATE_LINE_SEGMENT_PROJECT "Create the Project for the multi line segment tests." ON)
 option(CREATE_POSE_ESTIMATION_PROJECT "Create the Project for multi-homography to pose tests." ON)
 option(CREATE_GENERALIZED_HOMOGRAPHY_PROJECT "Create the Project for generalized multi-homography to pose tests." ON)
+option(CREATE_GENERALIZED_HOMOGRAPHY_LOCALIZATION_PROJECT "Create the Project for generalized multi-homography to pose localization tests." ON)
 
 SET (CMAKE_BUILD_TYPE "RELEASE")
 
@@ -125,23 +126,6 @@ file(GLOB_RECURSE SRCS_PROGXPRIME
 	"${SOURCE_DIR}/include/*.cpp"
 )
 
-# ==============================================================================
-# Structure: Python binding
-# ==============================================================================
-# Generate python module
-#add_subdirectory(graph-cut-ransac/lib/pybind11)
-#
-#pybind11_add_module(pyprogxprime 
-#	${SOURCE_DIR}/src/bindings.cpp 
-#	${SOURCE_DIR}/src/pyprogxprime_python.cpp
-#	${HDRS_PROGXPRIME} 
-#	${SRCS_PROGXPRIME})
-#
-#target_link_libraries(pyprogxprime PRIVATE  
-#	${OpenCV_LIBS} 
-#	Eigen3::Eigen
-#	GraphCutRANSAC)
-
 add_library(${PROJECT_NAME} STATIC 
 	${HDRS_PROGXPRIME} 
 	${SRCS_PROGXPRIME})
@@ -227,3 +211,23 @@ if (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
 
 	add_dependencies(GeneralizedHomographyTests ${PROJECT_NAME})
 endif (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
+
+if (CREATE_GENERALIZED_HOMOGRAPHY_LOCALIZATION_PROJECT)
+
+	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
+
+	add_executable(GeneralizedHomographyLocalizationTests
+		examples/example_generalized_homography_localization.cpp)
+		
+	target_link_libraries(GeneralizedHomographyLocalizationTests PUBLIC
+		${PROJECT_NAME}
+		${OpenCV_LIBS}
+		Eigen3::Eigen
+		GraphCutRANSAC
+		gflags
+	)
+
+	add_dependencies(GeneralizedHomographyLocalizationTests ${PROJECT_NAME})
+endif (CREATE_GENERALIZED_HOMOGRAPHY_LOCALIZATION_PROJECT)
+
+

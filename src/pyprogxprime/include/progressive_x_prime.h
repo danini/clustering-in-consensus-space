@@ -259,7 +259,7 @@ namespace progx
 			//printf("Adding %d new hypotheses.\n", nextHypothesesNumber);
 			++iterationIdx;
 
-			if (iterationIdx > settings.maximumRANSACIterations)
+			if (iterationIdx >= settings.maximumRANSACIterations)
 			{
 				running = false;
 				break;
@@ -369,25 +369,24 @@ namespace progx
 			}*/
 		}
 
-		if constexpr (!_ModelEstimator::needInitialModel())
-			for (size_t modelIdx = 0; modelIdx < models_.size(); ++modelIdx)
-			{
-				size_t inlierNums = 0;
-				std::vector<gcransac::Model> refitModel;
+		for (size_t modelIdx = 0; modelIdx < models_.size(); ++modelIdx)
+		{
+			size_t inlierNums = 0;
+			std::vector<gcransac::Model> refitModel;
 
-				if (modelData_[modelIdx].inliers.size() < kSampleNumber)
-					continue;
+			if (modelData_[modelIdx].inliers.size() < kSampleNumber)
+				continue;
 
-				// Estimate the model parameters using the current sample
-				if (!estimatorObject->estimateModelNonminimal(
-					points_,  // All points
-					&(modelData_[modelIdx].inliers[0]), // The current sample
-					modelData_[modelIdx].inliers.size(),
-					&refitModel)) // The estimated model parameters
-					continue;
+			// Estimate the model parameters using the current sample
+			if (!estimatorObject->estimateModelNonminimal(
+				points_,  // All points
+				&(modelData_[modelIdx].inliers[0]), // The current sample
+				modelData_[modelIdx].inliers.size(),
+				&refitModel)) // The estimated model parameters
+				continue;
 
-				models_[modelIdx] = refitModel[0];
-			}
+			models_[modelIdx] = refitModel[0];
+		}
 	}
 
 	template<
@@ -589,9 +588,6 @@ namespace progx
 			if (currentInliers.size() < estimator_.nonMinimalSampleSize())
 				continue;
 
-			if constexpr (_ModelEstimator::needInitialModel())
-				newHypotheses.emplace_back(hypotheses_[clusterInliers_[clusterIdx].second]);
-
 			// Estimate the model parameters using the current sample
 			if (!estimator_.estimateModelNonminimal(
 				points_,  // All points
@@ -599,8 +595,6 @@ namespace progx
 				currentInliers.size(),
 				&newHypotheses)) // The estimated model parameters
 			{
-				if constexpr (!_ModelEstimator::needInitialModel())
-					newHypotheses.emplace_back(hypotheses_[clusterIdx]);
 				newHypothesisData.emplace_back(hypothesisData_[clusterIdx]);
 				continue;
 			}
@@ -608,30 +602,12 @@ namespace progx
 			newHypothesisData.resize(newHypothesisData.size() + 1);
 			auto& currentData = newHypothesisData.back();
 
-			// If the non-minimal fitting algorithm requires an initial model that means in our case that it is 
-			// a numerical optimization by, e.g., Ceres. In this particular case, IRLS is not needed, we only
-			// have to reselect the inliers using the updated model parameters
-			if constexpr (_ModelEstimator::needInitialModel())
-			{
-				// Selecting the model's new inliers
-				progx::Score score = scoringFunction->getScore(
-					points_, // All points
-					newHypotheses.back(), // The current model parameters
-					estimator_, // The estimator 
-					settings.inlierOutlierThreshold, // The current threshold
-					currentData.inliers, // The current inlier set
-					progx::Score(), // The score of the current so-far-the-best model
-					true); // Flag to decide if the inliers are needed
-			}
-			else
-			{
-				// Apply iteratively re-weighted least-squares fitting to improve the model parameters and find their inliers
-				iterativelyReweightedLSQ(
-					points_, // All points
-					estimator_, // The estimator 
-					newHypotheses.back(), // The current model parameters
-					currentData.inliers); // The current inlier set			
-			}
+			// Apply iteratively re-weighted least-squares fitting to improve the model parameters and find their inliers
+			iterativelyReweightedLSQ(
+				points_, // All points
+				estimator_, // The estimator 
+				newHypotheses.back(), // The current model parameters
+				currentData.inliers); // The current inlier set		
 
 			// Initialize the consensus vector
 			currentData.consensusVector.resize(kPointNumber, 0);
@@ -706,8 +682,6 @@ namespace progx
 
 			// Estimate the model parameters using the current sample
 			tmpModel.clear();
-			if constexpr (_ModelEstimator::needInitialModel())
-				tmpModel.emplace_back(model_);
 			if (!estimator_.estimateModelNonminimal(
 				points_,  // All points
 				&inliers_[0], // The current sample

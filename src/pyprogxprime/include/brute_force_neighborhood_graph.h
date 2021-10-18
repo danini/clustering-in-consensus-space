@@ -33,11 +33,11 @@
 // Author: Daniel Barath (barath.daniel@sztaki.mta.hu)
 #pragma once
 
-#include "neighborhood_graph.h"
+#include "neighborhood/neighborhood_graph.h"
 #include <vector>
 #include <opencv2/core/core.hpp>
 #include <Eigen/Eigen>
-#include "estimator.h"
+#include "estimators/estimator.h"
 
 namespace gcransac
 {

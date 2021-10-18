@@ -64,8 +64,8 @@ namespace gcransac
 					orderedSplits(orderedSplits_),
 					blockBorders(blockBorders_)
 			{
-				if (sampleSplit.size() != blockNumber)
-					fprintf(stderr, "Error when initializing the generalized uniform sampler. The split and block numbers are different.\n");
+				//if (sampleSplit.size() != blockNumber)
+				//	fprintf(stderr, "Error when initializing the generalized uniform sampler. The split and block numbers are different.\n");
 
 				initialized = initialize(container_);
 			}
@@ -125,20 +125,38 @@ namespace gcransac
 			if (sample_size_ > pool_.size())
 				return false;
 
-			size_t currentBlock = 0;
+			/*size_t currentBlock = 0;
 			if (!orderedSplits)
 				// Generate a random starting block
-				currentBlock = blockSelector->getRandomNumber();
+				currentBlock = blockSelector->getRandomNumber();*/
 
 			size_t sampleIdx = 0;
+			int currentBlock = 0,
+				prevBlock = -1;
 
-			for (size_t blockIdx = 0; blockIdx < blockNumber; ++blockIdx)
+			for (size_t splitIdx = 0; splitIdx < sampleSplit.size(); ++splitIdx)
+			{
+				const size_t& pointNumber = sampleSplit[splitIdx];
+
+				do
+				{
+					currentBlock = blockSelector->getRandomNumber();
+				} while (currentBlock == prevBlock);
+				prevBlock = currentBlock;
+
+				for (size_t localSampleIdx = 0; localSampleIdx < pointNumber; ++localSampleIdx)
+				{
+					subset_[sampleIdx++] = pool_[random_generators[currentBlock]->getRandomNumber()];
+				}
+			}
+	
+			/*for (size_t blockIdx = 0; blockIdx < blockNumber; ++blockIdx)
 			{
 				for (size_t localSampleIdx = 0; localSampleIdx < sampleSplit[blockIdx]; ++localSampleIdx)
 					subset_[sampleIdx++] = pool_[random_generators[currentBlock]->getRandomNumber()];
 
 				currentBlock = (currentBlock + 1) % blockNumber;
-			}
+			}*/
 			return true;
 		}
 	}

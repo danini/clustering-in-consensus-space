@@ -270,6 +270,112 @@ namespace pose
 		}
 	}
 
+	bool DecomposeHomography(const Eigen::Matrix3d& H,
+		std::vector<Eigen::Matrix3d>* Rs,
+		std::vector<Eigen::Vector3d>* ts,
+		std::vector<Eigen::Vector3d>* ns) {
+		Rs->clear();
+		ts->clear();
+		ns->clear();
+		// The following code is based on The Robotics Toolbox for Matlab (RTB) and
+		// the corresponding copyright note is replicated below.
+		// Copyright (C) 1993-2011, by Peter I. Corke
+		//
+		// This file is part of The Robotics Toolbox for Matlab (RTB).
+		//
+		// RTB is free software: you can redistribute it and/or modify
+		// it under the terms of the GNU Lesser General Public License as published by
+		// the Free Software Foundation, either version 3 of the License, or
+		// (at your option) any later version.
+		//
+		// RTB is distributed in the hope that it will be useful,
+		// but WITHOUT ANY WARRANTY; without even the implied warranty of
+		// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+		// GNU Lesser General Public License for more details.
+		//
+		// You should have received a copy of the GNU Leser General Public License
+		// along with RTB.  If not, see <http://www.gnu.org/licenses/>.
+
+		// normalize H so that the second singular value is one
+		Eigen::JacobiSVD<Eigen::Matrix3d> svd1(H);
+		Eigen::Matrix3d H2 = H / svd1.singularValues()[1];
+
+		// compute the SVD of the symmetric matrix H'*H = VSV'
+		Eigen::JacobiSVD<Eigen::Matrix3d> svd2(H2.transpose() * H2,
+			Eigen::ComputeFullU | Eigen::ComputeFullV);
+		Eigen::Matrix3d V = svd2.matrixV();
+
+		// ensure V is right-handed
+		if (V.determinant() < 0.0) V *= -1.0;
+
+		// get the squared singular values
+		Eigen::Vector3d S = svd2.singularValues();
+		double s1 = S[0];
+		double s3 = S[2];
+
+		Eigen::Vector3d v1 = V.col(0);
+		Eigen::Vector3d v2 = V.col(1);
+		Eigen::Vector3d v3 = V.col(2);
+
+		// pure the case of pure rotation all the singular values are equal to 1
+		if (fabs(s1 - s3) < 1e-14) {
+			return false;
+		}
+		else {
+			// compute orthogonal unit vectors
+			Eigen::Vector3d u1 = (sqrt(1.0 - s3) * v1 + sqrt(s1 - 1.0) * v3) / sqrt(s1 - s3);
+			Eigen::Vector3d u2 = (sqrt(1.0 - s3) * v1 - sqrt(s1 - 1.0) * v3) / sqrt(s1 - s3);
+
+			Eigen::Matrix3d U1, W1, U2, W2;
+			U1.col(0) = v2;
+			U1.col(1) = u1;
+			U1.col(2) = v2.cross(u1);
+
+			W1.col(0) = H2 * v2;
+			W1.col(1) = H2 * u1;
+			W1.col(2) = (H2 * v2).cross(H2 * u1);
+
+			U2.col(0) = v2;
+			U2.col(1) = u2;
+			U2.col(2) = v2.cross(u2);
+
+			W2.col(0) = H2 * v2;
+			W2.col(1) = H2 * u2;
+			W2.col(2) = (H2 * v2).cross(H2 * u2);
+
+			// compute the rotation matrices
+			Eigen::Matrix3d R1 = W1 * U1.transpose();
+			Eigen::Matrix3d R2 = W2 * U2.transpose();
+
+			// build the solutions, discard those with negative plane normals
+			// Compare to the original code, we do not invert the transformation.
+			// Furthermore, we multiply t with -1.
+			Eigen::Vector3d n = v2.cross(u1);
+			ns->push_back(n);
+			Rs->push_back(R1);
+			Eigen::Vector3d t = -(H2 - R1) * n;
+			ts->push_back(t);
+
+			ns->push_back(-n);
+			t = (H2 - R1) * n;
+			Rs->push_back(R1);
+			ts->push_back(t);
+
+
+			n = v2.cross(u2);
+			ns->push_back(n);
+			t = -(H2 - R2) * n;
+			Rs->push_back(R2);
+			ts->push_back(t);
+
+			ns->push_back(-n);
+			t = (H2 - R2) * n;
+			ts->push_back(t);
+			Rs->push_back(R2);
+		}
+		return true;
+	}
+
 	// Decomposing a given homography matrix into the possible pose parameters
 	inline void decomposeHomographyMatrix(
 		const Eigen::Matrix3d& homography_, // The homography matrix to be decomposed

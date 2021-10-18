@@ -43,13 +43,13 @@
 #include <unsupported/Eigen/Polynomials>
 #include <Eigen/Eigen>
 
-#include "estimator.h"
-#include "homography_estimator.h"
-#include "grid_neighborhood_graph.h"
+#include "estimators/estimator.h"
+#include "estimators/homography_estimator.h"
+#include "neighborhood/grid_neighborhood_graph.h"
 #include "model.h"
-#include "uniform_sampler.h"
+#include "samplers/uniform_sampler.h"
 
-#include "solver_linear_model.h"
+#include "estimators/solver_linear_model.h"
 
 namespace progx
 {

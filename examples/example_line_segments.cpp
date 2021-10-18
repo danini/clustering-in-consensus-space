@@ -78,11 +78,11 @@ DEFINE_int32(clustering, 0,
 
 // Applying Progressive-X
 typedef progx::ProgressiveXPrime<
-	clustering::density::MeanShiftClustering<
+	clustering::density::DBScanClustering<
 	progx::ModelData,
 	clustering::distances::TanimotoDistance<progx::ModelData>>,
 	clustering::distances::TanimotoDistance<progx::ModelData>,
-	clustering::losses::MAGSACLoss<double, progx::utils::Default2DLineEstimator, 2>,
+	clustering::losses::TukeyBisquareLoss<double>,
 	progx::utils::Default2DLineEstimator,
 	gcransac::sampler::UniformSampler> ProgXPrime;
 

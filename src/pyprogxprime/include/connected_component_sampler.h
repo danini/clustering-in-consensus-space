@@ -43,9 +43,9 @@
 #include <opencv2/cudafeatures2d.hpp>
 
 #include "uniform_random_generator.h"
-#include "grid_neighborhood_graph.h"
-#include "prosac_sampler.h"
-#include "sampler.h"
+#include "neighborhood/grid_neighborhood_graph.h"
+#include "samplers/prosac_sampler.h"
+#include "samplers/sampler.h"
 
 #include <iostream>
 
@@ -76,6 +76,7 @@ namespace gcransac
 			size_t currentStructureIdx;
 
 			std::vector<std::vector<std::pair<double, size_t>>> neighborhoodGraph;
+			bool usingSpatialModel;
 
 		public:
 			explicit ConnectedComponentSampler(
@@ -95,7 +96,8 @@ namespace gcransac
 				minimumStructureSize(minimumStructureSize_),
 				useGPU(useGPU_),
 				pointNumberToUseGPU(pointNumberToUseGPU_),
-				maximumDistance(maximumDistance_)
+				maximumDistance(maximumDistance_),
+				usingSpatialModel(true)
 			{
 				initialized = initialize(container_);
 			}
@@ -110,6 +112,8 @@ namespace gcransac
 				const double& currentMaximumDistance_);
 
 			void reset();
+
+			bool isUsingSpatialModel() const { return usingSpatialModel; }
 
 			const std::string getName() const { return "Connected Component Sampler"; }
 
@@ -304,6 +308,7 @@ namespace gcransac
 				randomGenerator->generateUniqueRandomSet(
 					subset_,
 					sampleSize_);
+				usingSpatialModel = true;
 				return true;
 			}
 
@@ -316,6 +321,7 @@ namespace gcransac
 				randomGenerator->generateUniqueRandomSet(
 					subset_,
 					sampleSize_);
+				usingSpatialModel = true;
 				return true;
 			}
 
@@ -345,6 +351,7 @@ namespace gcransac
 				randomGenerator->generateUniqueRandomSet(
 					&(subset_[0]),
 					sampleSize_);
+				usingSpatialModel = true;
 				return true;
 			}
 
@@ -358,6 +365,7 @@ namespace gcransac
 				randomGenerator->generateUniqueRandomSet(
 					&(subset_[0]),
 					sampleSize_);
+				usingSpatialModel = true;
 				return true;
 			}
 

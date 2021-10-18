@@ -43,17 +43,17 @@
 #include <unsupported/Eigen/Polynomials>
 #include <Eigen/Eigen>
 
-#include "estimator.h"
-#include "homography_estimator.h"
-#include "grid_neighborhood_graph.h"
+#include "estimators/estimator.h"
+#include "estimators/homography_estimator.h"
+#include "neighborhood/grid_neighborhood_graph.h"
 #include "model.h"
-#include "uniform_sampler.h"
+#include "samplers/uniform_sampler.h"
 
 #include "GCRANSAC.h"
 
-#include "solver_fundamental_matrix_seven_point.h"
-#include "solver_fundamental_matrix_plane_and_parallax.h"
-#include "solver_fundamental_matrix_eight_point.h"
+#include "estimators/solver_fundamental_matrix_seven_point.h"
+#include "estimators/solver_fundamental_matrix_plane_and_parallax.h"
+#include "estimators/solver_fundamental_matrix_eight_point.h"
 
 namespace progx
 {
@@ -121,6 +121,7 @@ namespace progx
 			static constexpr bool needInitialModel() {
 				return false;
 			}
+
 
 			// The size of a minimal sample_ required for the estimation
 			static constexpr size_t maximumMinimalSolutions() {
@@ -527,14 +528,14 @@ namespace progx
 
 					// Do a local GC-RANSAC to determine the parameters of the fundamental matrix by
 					// the plane-and-parallax algorithm using the determined homography.
-					gcransac::estimator::FundamentalMatrixEstimator<gcransac::estimator::solver::FundamentalMatrixPlaneParallaxSolver, // The solver used for fitting a model to a minimal sample
+					estimator::FundamentalMatrixEstimator<gcransac::estimator::solver::FundamentalMatrixPlaneParallaxSolver, // The solver used for fitting a model to a minimal sample
 						gcransac::estimator::solver::FundamentalMatrixEightPointSolver> estimator(0.0, false);
 					estimator.getMinimalSolver()->setHomography(&nonminimal_homography);
 
 					std::vector<int> inliers;
 					Model model;
 
-					gcransac::GCRANSAC<gcransac::estimator::FundamentalMatrixEstimator<gcransac::estimator::solver::FundamentalMatrixPlaneParallaxSolver, // The solver used for fitting a model to a minimal sample
+					gcransac::GCRANSAC<estimator::FundamentalMatrixEstimator<gcransac::estimator::solver::FundamentalMatrixPlaneParallaxSolver, // The solver used for fitting a model to a minimal sample
 						gcransac::estimator::solver::FundamentalMatrixEightPointSolver>, 
 						gcransac::neighborhood::GridNeighborhoodGraph<4>> gcransac;
 					gcransac.settings.threshold = threshold_; // The inlier-outlier threshold

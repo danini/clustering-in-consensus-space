@@ -147,32 +147,6 @@ void getLabeling(
 	std::vector<double> minDistances(
 		points_.rows,
 		std::numeric_limits<double>::max());
-	/*labels_.resize(kPointNumber, kModelNumber);
-	max_labels_ = kModelNumber;
-
-	for (size_t modelIdx = 0; modelIdx < kModelNumber; ++modelIdx)
-	{
-		size_t& inlierNumber = inlierNumbers[modelIdx];
-
-		for (size_t pointIdx = 0; pointIdx < kPointNumber; ++pointIdx)
-		{
-			const double distance =
-				estimator.squaredResidual(
-					points_.row(pointIdx),
-					models_[modelIdx]);
-
-			if (distance < kSquaredThreshold)
-			{
-				++inlierNumber;
-				if (distance < minDistances[pointIdx])
-				{
-					minDistances[pointIdx] = distance;
-					labels_[pointIdx] = modelIdx;
-				}
-			}
-		}
-	}*/
-
 	
 	pearl::PEARL<
 		gcransac::neighborhood::BFNeighborhoodGraph, 

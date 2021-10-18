@@ -33,8 +33,8 @@
 // Author: Daniel Barath (barath.daniel@sztaki.mta.hu)
 #pragma once
 
-#include "solver_engine.h"
-#include "homography_estimator.h"
+#include "estimators/solver_engine.h"
+#include "estimators/homography_estimator.h"
 
 namespace progx
 {

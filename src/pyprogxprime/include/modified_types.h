@@ -36,25 +36,25 @@
 #include <vector>
 #include <numeric>
 
-#include "fundamental_estimator.h"
-#include "homography_estimator.h"
-#include "essential_estimator.h"
-#include "perspective_n_point_estimator.h"
+#include "estimators/fundamental_estimator.h"
+#include "estimators/homography_estimator.h"
+#include "estimators/essential_estimator.h"
+#include "estimators/perspective_n_point_estimator.h"
 #include "subspace4_estimator.h"
-#include "rigid_transformation_estimator.h"
+#include "estimators/rigid_transformation_estimator.h"
 
 #include "modified_homography_estimator.h"
 #include "modified_fundamental_estimator.h"
 #include "modified_linear_model_estimator.h"
 #include "modified_solver_fundamental_matrix_seven_point.h"
 #include "modified_solver_homography_four_point.h"
-#include "solver_fundamental_matrix_eight_point.h"
-#include "solver_p3p.h"
-#include "solver_epnp_lm.h"
-#include "solver_dls_pnp.h"
-#include "solver_homography_four_point.h"
-#include "solver_essential_matrix_five_point_stewenius.h"
-#include "solver_rigid_transformation_svd.h"
+#include "estimators/solver_fundamental_matrix_eight_point.h"
+#include "estimators/solver_p3p.h"
+#include "estimators/solver_epnp_lm.h"
+#include "estimators/solver_dls_pnp.h"
+#include "estimators/solver_homography_four_point.h"
+#include "estimators/solver_essential_matrix_five_point_stewenius.h"
+#include "estimators/solver_rigid_transformation_svd.h"
 #include "solver_subspace4.h"
 
 namespace progx
