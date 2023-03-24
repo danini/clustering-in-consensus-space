@@ -1,16 +1,13 @@
 cmake_minimum_required(VERSION 3.8)
 
-project(ProgressiveXPrime LANGUAGES CXX)
+project(MultiConsensusClustering LANGUAGES CXX)
 
 # indicate if OPENMP should be enabled
 option(USE_OPENMP "Use OPENMP" ON)
 
 # indicate if the sample project should be generated
-option(CREATE_TRADITIONAL_TEST_PROJECT "Create the Project for the traditional multi-model tests." ON)
-option(CREATE_LINE_SEGMENT_PROJECT "Create the Project for the multi line segment tests." ON)
-option(CREATE_POSE_ESTIMATION_PROJECT "Create the Project for multi-homography to pose tests." ON)
-option(CREATE_GENERALIZED_HOMOGRAPHY_PROJECT "Create the Project for generalized multi-homography to pose tests." ON)
-option(CREATE_GENERALIZED_HOMOGRAPHY_LOCALIZATION_PROJECT "Create the Project for generalized multi-homography to pose localization tests." ON)
+option(CREATE_SAMPLE_PROJECT "Create the Project for the traditional multi-model tests." ON)
+option(CREATE_PYTHON_BINDING "Create Pyhton bindings for the project." ON)
 
 SET (CMAKE_BUILD_TYPE "RELEASE")
 
@@ -28,6 +25,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_FLAGS "-fpermissive")
+
 # ==============================================================================
 # Find OpenCV
 # ==============================================================================
@@ -57,30 +55,10 @@ if(DEFINED gflags_VERSION_STRING OR DEFINED GFLAGS_VERSION_STRING)
   message( STATUS "> GFLAGS_LIBRARIES:   ${GFLAGS_LIBRARIES}" )
 endif()
 
-find_package(Sophus)
-message(STATUS "Search Dependency: Sophus")
-
-if(Sophus_FOUND)
-	if (TARGET Sophus::Sophus)
-		get_target_property(Sophus_INCLUDE_DIR Sophus::Sophus INTERFACE_INCLUDE_DIRECTORIES)
-	else()
-		find_path(SOPHUS_INCLUDE_DIR "sophus/common.hpp")
-	endif()
-	include_directories(AFTER ${Sophus_INCLUDE_DIR})
-else()
-    message(WARNING "Using Sophus is set, but Sophus is NOT found. Sophus is used only in the pose estimation example project which will, thus, not be built.")
-    set(CREATE_POSE_ESTIMATION_PROJECT 0)
-endif()
-
-# ==============================================================================
-# Find OpenMP
-# ==============================================================================
-find_package(Ceres REQUIRED)
-
 # ==============================================================================
 # Includes
 # ==============================================================================
-SET(SOURCE_DIR "src/pyprogxprime")
+SET(SOURCE_DIR "src/pyconsensusclustering")
 
 include_directories (
 	${PROJECT_SOURCE_DIR}/graph-cut-ransac/src/pygcransac/include
@@ -110,25 +88,24 @@ target_link_libraries(GraphCutRANSAC
 	gflags)
 
 # ==============================================================================
-# Structure: Progressive-X Prime Library
+# Structure: Multi-Consensus Library
 # ==============================================================================
-
 # Tell cmake that headers are in alse in source_dir
 include_directories (${SOURCE_DIR}/include)
 
 # Set header files for the library
-file(GLOB_RECURSE HDRS_PROGXPRIME
+file(GLOB_RECURSE HDRS_MULTICONSENSUS
 	"${SOURCE_DIR}/include/*.h"
 ) 
 
 # Set source files to be added to the library
-file(GLOB_RECURSE SRCS_PROGXPRIME 
+file(GLOB_RECURSE SRCS_MULTICONSENSUS 
 	"${SOURCE_DIR}/include/*.cpp"
 )
 
 add_library(${PROJECT_NAME} STATIC 
-	${HDRS_PROGXPRIME} 
-	${SRCS_PROGXPRIME})
+	${HDRS_MULTICONSENSUS} 
+	${SRCS_MULTICONSENSUS})
 
 target_link_libraries(${PROJECT_NAME} 
 	${OpenCV_LIBS}
@@ -138,17 +115,33 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
+
+# ==============================================================================
+# Structure: Python binding
+# ==============================================================================
+if (CREATE_PYTHON_BINDING)
+	# Generate python module
+	add_subdirectory(lib/pybind11)
+	
+	pybind11_add_module(pymulticonsensus ${SOURCE_DIR}/src/bindings.cpp ${SOURCE_DIR}/src/pymulticonsensus_python.cpp  ${HDRS_MULTICONSENSUS} ${SRCS_MULTICONSENSUS} )
+	
+	target_link_libraries(pymulticonsensus PRIVATE  
+		${OpenCV_LIBS} 
+		Eigen3::Eigen 
+		gflags
+		GraphCutRANSAC)
+endif (CREATE_PYTHON_BINDING)
 	
 # ==============================================================================
 # Structure: Applications
 # ==============================================================================
-if (CREATE_TRADITIONAL_TEST_PROJECT)
+if (CREATE_SAMPLE_PROJECT)
 	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
 
-	add_executable(TraditionalTests
+	add_executable(SampleProject
 		examples/cpp_example.cpp)
 		
-	target_link_libraries(TraditionalTests PUBLIC
+	target_link_libraries(SampleProject PUBLIC
 		${PROJECT_NAME}
 		${OpenCV_LIBS}
 		Eigen3::Eigen
@@ -156,78 +149,5 @@ if (CREATE_TRADITIONAL_TEST_PROJECT)
 		gflags
 	)
 
-	add_dependencies(TraditionalTests ${PROJECT_NAME})
-endif (CREATE_TRADITIONAL_TEST_PROJECT)
-
-if (CREATE_LINE_SEGMENT_PROJECT)
-	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
-
-	add_executable(LineSegmentTests
-		examples/example_line_segments.cpp)
-		
-	target_link_libraries(LineSegmentTests PUBLIC
-		${PROJECT_NAME}
-		${OpenCV_LIBS}
-		Eigen3::Eigen
-		GraphCutRANSAC
-		gflags
-	)
-
-	add_dependencies(LineSegmentTests ${PROJECT_NAME})
-endif (CREATE_LINE_SEGMENT_PROJECT)
-
-if (CREATE_POSE_ESTIMATION_PROJECT)
-
-	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
-
-	add_executable(PoseGraphTests
-		examples/example_pose.cpp)
-		
-	target_link_libraries(PoseGraphTests PUBLIC
-		${PROJECT_NAME}
-		${OpenCV_LIBS}
-		Eigen3::Eigen
-		GraphCutRANSAC
-		gflags
-	)
-
-	add_dependencies(PoseGraphTests ${PROJECT_NAME})
-endif (CREATE_POSE_ESTIMATION_PROJECT)
-
-if (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
-
-	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
-
-	add_executable(GeneralizedHomographyTests
-		examples/example_generalized_homography.cpp)
-		
-	target_link_libraries(GeneralizedHomographyTests PUBLIC
-		${PROJECT_NAME}
-		${OpenCV_LIBS}
-		Eigen3::Eigen
-		GraphCutRANSAC
-		gflags
-	)
-
-	add_dependencies(GeneralizedHomographyTests ${PROJECT_NAME})
-endif (CREATE_GENERALIZED_HOMOGRAPHY_PROJECT)
-
-if (CREATE_GENERALIZED_HOMOGRAPHY_LOCALIZATION_PROJECT)
-
-	set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/build)
-
-	add_executable(GeneralizedHomographyLocalizationTests
-		examples/example_generalized_homography_localization.cpp)
-		
-	target_link_libraries(GeneralizedHomographyLocalizationTests PUBLIC
-		${PROJECT_NAME}
-		${OpenCV_LIBS}
-		Eigen3::Eigen
-		GraphCutRANSAC
-		gflags
-	)
-
-	add_dependencies(GeneralizedHomographyLocalizationTests ${PROJECT_NAME})
-endif (CREATE_GENERALIZED_HOMOGRAPHY_LOCALIZATION_PROJECT)
-
-
+	add_dependencies(SampleProject ${PROJECT_NAME})
+endif (CREATE_SAMPLE_PROJECT)

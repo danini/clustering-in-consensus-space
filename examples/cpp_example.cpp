@@ -45,12 +45,14 @@ DEFINE_string(dataset_path, "",
 	"The path where the data to be tested can be found.");
 DEFINE_bool(test_homography_fitting, true,
 	"A flag to decide if homographies should be tuned.");
-DEFINE_bool(test_two_view_motion_fitting, false,
+DEFINE_bool(test_two_view_motion_fitting, true,
 	"A flag to decide if two-view motions (i.e., fundamental matrices) should be tuned.");
-DEFINE_bool(test_motion_fitting, false,
+DEFINE_bool(test_motion_fitting, true,
 	"A flag to decide if video motions should be tuned.");
 DEFINE_bool(visualize, true,
 	"A flag to decide if the results should be visualized");
+DEFINE_bool(visualize_inner_steps, false,
+	"A flag to decide if the steps of the algorithm should be visualized.");
 DEFINE_bool(save_statistics, false,
 	"A flag to decide if the statistics should be saved.");
 DEFINE_int32(core_number, 1,
@@ -160,6 +162,9 @@ int settings_number = 0;
 std::string currentTime;
 
 std::vector<std::string> getAvailableTestScenes(const Problem& problem_);
+void runTwoViewMotion(const progx::MultiModelSettings& kSettings_);
+void runHomography(const progx::MultiModelSettings& kSettings_);
+void runRigidMotion(const progx::MultiModelSettings& kSettings_);
 
 int main(int argc, char** argv)
 {
@@ -169,111 +174,250 @@ int main(int argc, char** argv)
 	// Save the current date as a string
 	currentTime = getCurrentDateAndTime("%Y_%m_%d_%H_%M_%S");
 
-	// The directory where the 'data' folder is found
-	const std::string root_directory = FLAGS_dataset_path;
+	if (FLAGS_test_two_view_motion_fitting)
+	{
+		progx::MultiModelSettings parameters;
+		parameters.minimumInlierNumber = 20;
+		parameters.maximumIterations = 75;
+		parameters.inlierOutlierThreshold = 2.5;
+		parameters.modelDistanceThreshold = 0.85;
+		parameters.confidence = 0.999;
+		parameters.startingHypothesisNumber = 10;
+		parameters.addedHypothesisNumber = 10;
 
-	const double confidence = 0.99,
-		spatial_coherence_weight = 0.1,
-		neighborhood_ball_radius = 20,
-		maximum_tanimoto_similarity = 0.8;
+		runTwoViewMotion(parameters);
+	}
 
-	const bool visualize_results = true, // A flag to tell if the resulting labeling should be visualized
-		visualize_inner_steps = false; // A flag to tell if the steps of the algorithm should be visualized
+	if (FLAGS_test_homography_fitting)
+	{
+		progx::MultiModelSettings parameters;
+		parameters.minimumInlierNumber = 20;
+		parameters.maximumIterations = 75;
+		parameters.inlierOutlierThreshold = 2.5;
+		parameters.modelDistanceThreshold = 0.85;
+		parameters.confidence = 0.999;
+		parameters.startingHypothesisNumber = 10;
+		parameters.addedHypothesisNumber = 10;
 
-	progx::MultiModelSettings parameters;
-	parameters.minimumInlierNumber = 20;
-	parameters.maximumIterations = 75;
-	parameters.inlierOutlierThreshold = 2.5;
-	parameters.modelDistanceThreshold = 0.85;
-	parameters.confidence = confidence;
-	parameters.startingHypothesisNumber = 10;
-	parameters.addedHypothesisNumber = 10;
+		runHomography(parameters);
+	}
 
-	for (int minimumInlierNumber : { 20 })
-		for (double inlierOutlierThreshold : { 2.5 })
-			for (double modelDistanceThreshold : {  0.85, 0.9 })
-				for (const std::string& scene : getAvailableTestScenes(Problem::TwoViewMotion))
-				{
-					parameters.minimumInlierNumber = minimumInlierNumber;
-					parameters.inlierOutlierThreshold = inlierOutlierThreshold;
-					parameters.modelDistanceThreshold = modelDistanceThreshold;
+	if (FLAGS_test_motion_fitting)
+	{
+		progx::MultiModelSettings parameters;
+		parameters.minimumInlierNumber = 20;
+		parameters.maximumIterations = 75;
+		parameters.inlierOutlierThreshold = 2.5;
+		parameters.modelDistanceThreshold = 0.85;
+		parameters.confidence = 0.999;
+		parameters.startingHypothesisNumber = 10;
+		parameters.addedHypothesisNumber = 10;
 
-					printf("Processed scene = %s.\n", scene.c_str());
-
-					std::string src_image_path, // Path of the source image
-						dst_image_path, // Path of the destination image
-						input_correspondence_path, // Path where the detected correspondences are saved
-						output_correspondence_path, // Path where the inlier correspondences are saved
-						output_matched_image_path; // Path where the matched image is saved
-
-					// Initializing the paths 
-					if (!initializeScene(scene, // The scene's name
-						src_image_path, // The path of the source image
-						dst_image_path, // The path of the destination image
-						input_correspondence_path, // The path of the detected correspondences
-						output_correspondence_path, // The path of the correspondences saved with their labels
-						output_matched_image_path, // The path where the images with the labelings are saved
-						root_directory, // The root directory where the "results" and "data" folder are
-						true)) // In this dataset, the correspondences and a reference labeling are provided
-						continue;
-
-					if (FLAGS_sampler == 0)
-						testMultiTwoViewMotionFitting<gcransac::sampler::UniformSampler>(
-							scene, // The name of the current scene
-							src_image_path, // The source image's path
-							dst_image_path, // The destination image's path
-							input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
-							output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
-							output_matched_image_path, // The path where the matched image pair will be saved
-							parameters.confidence, // The RANSAC confidence value
-							parameters.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
-							parameters.maximumIterations,
-							parameters.startingHypothesisNumber,
-							parameters.addedHypothesisNumber,
-							parameters.modelDistanceThreshold,
-							parameters.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
-							visualize_results, // A flag to determine if the results should be visualized
-							visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-							true);  // In this dataset, the correspondences and a reference labeling are provided
-					else if (FLAGS_sampler == 1)
-						testMultiTwoViewMotionFitting<gcransac::sampler::ProgressiveNapsacSampler<4>>(
-							scene, // The name of the current scene
-							src_image_path, // The source image's path
-							dst_image_path, // The destination image's path
-							input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
-							output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
-							output_matched_image_path, // The path where the matched image pair will be saved
-							parameters.confidence, // The RANSAC confidence value
-							parameters.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
-							parameters.maximumIterations,
-							parameters.startingHypothesisNumber,
-							parameters.addedHypothesisNumber,
-							parameters.modelDistanceThreshold,
-							parameters.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
-							visualize_results, // A flag to determine if the results should be visualized
-							visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-							true);  // In this dataset, the correspondences and a reference labeling are provided
-					else
-						testMultiTwoViewMotionFitting<gcransac::sampler::ConnectedComponentSampler>(
-							scene, // The name of the current scene
-							src_image_path, // The source image's path
-							dst_image_path, // The destination image's path
-							input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
-							output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
-							output_matched_image_path, // The path where the matched image pair will be saved
-							parameters.confidence, // The RANSAC confidence value
-							parameters.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
-							parameters.maximumIterations,
-							parameters.startingHypothesisNumber,
-							parameters.addedHypothesisNumber,
-							parameters.modelDistanceThreshold,
-							parameters.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
-							visualize_results, // A flag to determine if the results should be visualized
-							visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-							true);  // In this dataset, the correspondences and a reference labeling are provided
-				}
+		runRigidMotion(parameters);
+	}
 	
 	return 0;
+}
+
+void runTwoViewMotion(const progx::MultiModelSettings& kSettings_)
+{
+	for (const std::string& scene : getAvailableTestScenes(Problem::TwoViewMotion))
+	{
+		printf("Processed scene = %s.\n", scene.c_str());
+
+		std::string src_image_path, // Path of the source image
+			dst_image_path, // Path of the destination image
+			input_correspondence_path, // Path where the detected correspondences are saved
+			output_correspondence_path, // Path where the inlier correspondences are saved
+			output_matched_image_path; // Path where the matched image is saved
+
+		// Initializing the paths 
+		if (!initializeScene(scene, // The scene's name
+			src_image_path, // The path of the source image
+			dst_image_path, // The path of the destination image
+			input_correspondence_path, // The path of the detected correspondences
+			output_correspondence_path, // The path of the correspondences saved with their labels
+			output_matched_image_path, // The path where the images with the labelings are saved
+			FLAGS_dataset_path, // The root directory where the "results" and "data" folder are
+			true)) // In this dataset, the correspondences and a reference labeling are provided
+			continue;
+
+		if (FLAGS_sampler == 0)
+			testMultiTwoViewMotionFitting<gcransac::sampler::UniformSampler>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+		else if (FLAGS_sampler == 1)
+			testMultiTwoViewMotionFitting<gcransac::sampler::ProgressiveNapsacSampler<4>>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+		else
+			testMultiTwoViewMotionFitting<gcransac::sampler::ConnectedComponentSampler>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+	}
+}
+
+void runHomography(const progx::MultiModelSettings& kSettings_)
+{
+	for (const std::string& scene : getAvailableTestScenes(Problem::Homography))
+	{
+		printf("Processed scene = %s.\n", scene.c_str());
+
+		std::string src_image_path, // Path of the source image
+			dst_image_path, // Path of the destination image
+			input_correspondence_path, // Path where the detected correspondences are saved
+			output_correspondence_path, // Path where the inlier correspondences are saved
+			output_matched_image_path; // Path where the matched image is saved
+
+		// Initializing the paths 
+		if (!initializeScene(scene, // The scene's name
+			src_image_path, // The path of the source image
+			dst_image_path, // The path of the destination image
+			input_correspondence_path, // The path of the detected correspondences
+			output_correspondence_path, // The path of the correspondences saved with their labels
+			output_matched_image_path, // The path where the images with the labelings are saved
+			FLAGS_dataset_path, // The root directory where the "results" and "data" folder are
+			true)) // In this dataset, the correspondences and a reference labeling are provided
+			continue;
+
+		if (FLAGS_sampler == 0)
+			testMultiHomographyFitting<gcransac::sampler::UniformSampler>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+		else if (FLAGS_sampler == 1)
+			testMultiHomographyFitting<gcransac::sampler::ProgressiveNapsacSampler<4>>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+		else
+			testMultiHomographyFitting<gcransac::sampler::ConnectedComponentSampler>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+	}	
+}
+
+void runRigidMotion(const progx::MultiModelSettings& kSettings_)
+{
+	for (const std::string& scene : getAvailableTestScenes(Problem::RigidMotion))
+	{
+		printf("Processed scene = %s.\n", scene.c_str());
+
+		std::string src_image_path, // Path of the source image
+			dst_image_path, // Path of the destination image
+			input_correspondence_path, // Path where the detected correspondences are saved
+			output_correspondence_path, // Path where the inlier correspondences are saved
+			output_matched_image_path; // Path where the matched image is saved
+
+		// Initializing the paths 
+		if (!initializeScene(scene, // The scene's name
+			src_image_path, // The path of the source image
+			dst_image_path, // The path of the destination image
+			input_correspondence_path, // The path of the detected correspondences
+			output_correspondence_path, // The path of the correspondences saved with their labels
+			output_matched_image_path, // The path where the images with the labelings are saved
+			FLAGS_dataset_path, // The root directory where the "results" and "data" folder are
+			true)) // In this dataset, the correspondences and a reference labeling are provided
+			continue;
+
+		testMultiMotionFitting(
+			scene, // The name of the current scene
+			src_image_path, // The source image's path
+			input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+			output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+			kSettings_.confidence, // The RANSAC confidence value
+			kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+			kSettings_.maximumIterations,
+			kSettings_.startingHypothesisNumber,
+			kSettings_.addedHypothesisNumber,
+			kSettings_.modelDistanceThreshold,
+			kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+			FLAGS_visualize, // A flag to determine if the results should be visualized
+			FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+			true);  // In this dataset, the correspondences and a reference labeling are provided
+	}
 }
 
 std::vector<std::string> getAvailableTestScenes(const Problem& problem_)
@@ -281,7 +425,6 @@ std::vector<std::string> getAvailableTestScenes(const Problem& problem_)
 	switch (problem_)
 	{
 	case Problem::Homography:
-		/*, "boxesandbooks"*/ /*"glasscasea", "glasscaseb",*/  /*, "stairs"*/
 		// Scenes from the AdelaideRMF H dataset. Correspondences are obtained by the EPOS method.
 		return { "stairs",  "johnssona", "oldclassicswing", "johnssonb", "unihouse", "bonhall" "unionhouse", "barrsmith",
 		 "bonython", "elderhalla",
@@ -424,7 +567,7 @@ void testMultiMotionFitting(
 		printf("Uniform sampler initialization time = %f secs.\n", elapsed_seconds.count());
 
 		// Applying Progressive-X
-		typedef progx::ProgressiveXPrime<
+		typedef progx::MultiConsensusFitting<
 			clustering::density::DBScanClustering<
 			progx::ModelData,
 			clustering::distances::TanimotoDistance<progx::ModelData>>,
@@ -644,7 +787,7 @@ void testMultiTwoViewMotionFitting(
 	printf("Sampler initialization time = %f secs.\n", elapsed_seconds.count());
 
 	// Applying Progressive-X
-	typedef progx::ProgressiveXPrime<
+	typedef progx::MultiConsensusFitting<
 		clustering::density::DBScanClustering<
 		progx::ModelData,
 		clustering::distances::TanimotoDistance<progx::ModelData>>,
@@ -845,7 +988,7 @@ void testMultiHomographyFitting(
 	printf("Sampler initialization time = %f secs.\n", elapsed_seconds.count());
 
 	// Applying Progressive-X
-	using ProgXPrime = progx::ProgressiveXPrime<
+	using ProgXPrime = progx::MultiConsensusFitting<
 		ClusteringMethod,
 		clustering::distances::TanimotoDistance<progx::ModelData>,
 		clustering::losses::MAGSACLoss<double, gcransac::utils::DefaultHomographyEstimator, 4>,
