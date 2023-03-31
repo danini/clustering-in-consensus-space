@@ -22,6 +22,7 @@
 #include "samplers/uniform_sampler.h"
 #include "samplers/prosac_sampler.h"
 #include "samplers/progressive_napsac_sampler.h"
+#include "samplers/napsac_sampler.h"
 #include "modified_fundamental_estimator.h"
 #include "solver_homography_three_point.h"
 #include "modified_homography_estimator.h"
@@ -60,7 +61,7 @@ DEFINE_int32(core_number, 1,
 DEFINE_int32(repetitions, 5,
 	"The number of repetitions on each scene.");
 DEFINE_int32(sampler, 1,
-	"(0) Uniform sampler, (1) Progressive NAPSAC, (2) Connected Component sampler");
+	"(0) Uniform sampler, (1) Progressive NAPSAC, (2) Connected Component sampler, (3) NAPSAC sampler (FLANN neighborhood), (4) NAPSAC sampler (BF neighborhood)");
 
 enum Problem { Homography, TwoViewMotion, RigidMotion, Pose6D };
 
@@ -76,6 +77,7 @@ void testMultiHomographyFitting(
 	const std::string& input_correspondence_path_, // The path of the detected correspondences
 	const std::string& output_correspondence_path_,  // The path of the correspondences saved with their labels
 	const std::string& output_match_image_path_, // The path where the images with the labelings are saved
+	const double neighborhood_size_, // The size of the neighborhood used inside the sampler.
 	const double confidence_,
 	const double inlier_outlier_threshold_,
 	const double spatial_coherence_weight_,
@@ -163,7 +165,8 @@ std::string currentTime;
 
 std::vector<std::string> getAvailableTestScenes(const Problem& problem_);
 void runTwoViewMotion(const progx::MultiModelSettings& kSettings_);
-void runHomography(const progx::MultiModelSettings& kSettings_);
+void runHomography(const progx::MultiModelSettings& kSettings_,
+	const double kNeighborhoodRadius_);
 void runRigidMotion(const progx::MultiModelSettings& kSettings_);
 
 int main(int argc, char** argv)
@@ -199,7 +202,7 @@ int main(int argc, char** argv)
 		parameters.startingHypothesisNumber = 10;
 		parameters.addedHypothesisNumber = 10;
 
-		runHomography(parameters);
+		runHomography(parameters, 20.0);
 	}
 
 	if (FLAGS_test_motion_fitting)
@@ -278,7 +281,7 @@ void runTwoViewMotion(const progx::MultiModelSettings& kSettings_)
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
 				true);  // In this dataset, the correspondences and a reference labeling are provided
-		else
+		/*else
 			testMultiTwoViewMotionFitting<gcransac::sampler::ConnectedComponentSampler>(
 				scene, // The name of the current scene
 				src_image_path, // The source image's path
@@ -295,11 +298,12 @@ void runTwoViewMotion(const progx::MultiModelSettings& kSettings_)
 				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-				true);  // In this dataset, the correspondences and a reference labeling are provided
+				true);  // In this dataset, the correspondences and a reference labeling are provided*/
 	}
 }
 
-void runHomography(const progx::MultiModelSettings& kSettings_)
+void runHomography(const progx::MultiModelSettings& kSettings_,
+	const double kNeighborhoodRadius_)
 {
 	for (const std::string& scene : getAvailableTestScenes(Problem::Homography))
 	{
@@ -321,6 +325,9 @@ void runHomography(const progx::MultiModelSettings& kSettings_)
 			FLAGS_dataset_path, // The root directory where the "results" and "data" folder are
 			true)) // In this dataset, the correspondences and a reference labeling are provided
 			continue;
+			
+		// Initializing the neighborhood structure based on the provided paramereters
+		typedef gcransac::neighborhood::NeighborhoodGraph<cv::Mat> AbstractNeighborhood;
 
 		if (FLAGS_sampler == 0)
 			testMultiHomographyFitting<gcransac::sampler::UniformSampler>(
@@ -330,6 +337,7 @@ void runHomography(const progx::MultiModelSettings& kSettings_)
 				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
 				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
 				output_matched_image_path, // The path where the matched image pair will be saved
+				kNeighborhoodRadius_,
 				kSettings_.confidence, // The RANSAC confidence value
 				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
 				kSettings_.maximumIterations,
@@ -348,6 +356,7 @@ void runHomography(const progx::MultiModelSettings& kSettings_)
 				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
 				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
 				output_matched_image_path, // The path where the matched image pair will be saved
+				kNeighborhoodRadius_,
 				kSettings_.confidence, // The RANSAC confidence value
 				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
 				kSettings_.maximumIterations,
@@ -358,7 +367,45 @@ void runHomography(const progx::MultiModelSettings& kSettings_)
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
 				true);  // In this dataset, the correspondences and a reference labeling are provided
-		else
+		else if (FLAGS_sampler == 2)
+			testMultiHomographyFitting<gcransac::sampler::NapsacSampler<gcransac::neighborhood::FlannNeighborhoodGraph>>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kNeighborhoodRadius_,
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+		else if (FLAGS_sampler == 3)
+			testMultiHomographyFitting<gcransac::sampler::NapsacSampler<gcransac::neighborhood::BruteForceNeighborhoodGraph>>(
+				scene, // The name of the current scene
+				src_image_path, // The source image's path
+				dst_image_path, // The destination image's path
+				input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
+				output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
+				output_matched_image_path, // The path where the matched image pair will be saved
+				kNeighborhoodRadius_,
+				kSettings_.confidence, // The RANSAC confidence value
+				kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
+				kSettings_.maximumIterations,
+				kSettings_.startingHypothesisNumber,
+				kSettings_.addedHypothesisNumber,
+				kSettings_.modelDistanceThreshold,
+				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
+				FLAGS_visualize, // A flag to determine if the results should be visualized
+				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
+				true);  // In this dataset, the correspondences and a reference labeling are provided
+		/*else
 			testMultiHomographyFitting<gcransac::sampler::ConnectedComponentSampler>(
 				scene, // The name of the current scene
 				src_image_path, // The source image's path
@@ -375,7 +422,7 @@ void runHomography(const progx::MultiModelSettings& kSettings_)
 				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-				true);  // In this dataset, the correspondences and a reference labeling are provided
+				true);  // In this dataset, the correspondences and a reference labeling are provided*/
 	}	
 }
 
@@ -838,45 +885,56 @@ void testMultiTwoViewMotionFitting(
 		max_label);
 	intLabels.resize(labels.size());
 
-	std::vector<cv::Scalar> colors(max_label + 1);
-	for (auto& color : colors)
-		color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
-
-	colors[0] = cv::Scalar(255, 0, 0);
-	if (colors.size() > 2)
-		colors[1] = cv::Scalar(0, 255, 0);
-	if (colors.size() > 3)
-		colors[2] = cv::Scalar(0, 0, 255);
-	if (colors.size() > 4)
-		colors[3] = cv::Scalar(255, 0, 255);
-	if (colors.size() > 5)
-		colors[4] = cv::Scalar(0, 255, 255);
-	colors.back() = cv::Scalar(0, 0, 0);
-	
-	std::unordered_map<size_t, std::vector<size_t>> label_to_inliers;
-	label_to_inliers.reserve(max_label + 1);
- 
-	for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
+	if (FLAGS_visualize)
 	{
-		intLabels[pointIdx] = labels[pointIdx];
-		if (intLabels[pointIdx] == max_label)
-			intLabels[pointIdx] = -1;
+		std::vector<cv::Scalar> colors(max_label + 1);
+		for (auto& color : colors)
+			color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
 
-		cv::circle(source_image,
-			cv::Point(points.at<double>(pointIdx, 0), points.at<double>(pointIdx, 1)),
-			6,
-			colors[labels[pointIdx]],
-			-1);
+		colors[0] = cv::Scalar(255, 0, 0);
+		if (colors.size() > 2)
+			colors[1] = cv::Scalar(0, 255, 0);
+		if (colors.size() > 3)
+			colors[2] = cv::Scalar(0, 0, 255);
+		if (colors.size() > 4)
+			colors[3] = cv::Scalar(255, 0, 255);
+		if (colors.size() > 5)
+			colors[4] = cv::Scalar(0, 255, 255);
+		colors.back() = cv::Scalar(0, 0, 0);
+		
+		std::unordered_map<size_t, std::vector<size_t>> label_to_inliers;
+		label_to_inliers.reserve(max_label + 1);
+	
+		for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
+		{
+			intLabels[pointIdx] = labels[pointIdx];
+			if (intLabels[pointIdx] == max_label)
+				intLabels[pointIdx] = -1;
 
-		cv::circle(destination_image,
-			cv::Point(points.at<double>(pointIdx, 2), points.at<double>(pointIdx, 3)),
-			6,
-			colors[labels[pointIdx]],
-			-1);
+			cv::circle(source_image,
+				cv::Point(points.at<double>(pointIdx, 0), points.at<double>(pointIdx, 1)),
+				6,
+				colors[labels[pointIdx]],
+				-1);
 
-		// Storing the inliers of the current model after labeling
-		auto& inliers = label_to_inliers[labels[pointIdx]];
-		inliers.emplace_back(pointIdx);
+			cv::circle(destination_image,
+				cv::Point(points.at<double>(pointIdx, 2), points.at<double>(pointIdx, 3)),
+				6,
+				colors[labels[pointIdx]],
+				-1);
+
+			// Storing the inliers of the current model after labeling
+			auto& inliers = label_to_inliers[labels[pointIdx]];
+			inliers.emplace_back(pointIdx);
+
+			cv::namedWindow("Label Image 1", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+			cv::namedWindow("Label Image 2", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
+			cv::resizeWindow("Label Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
+			cv::resizeWindow("Label Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
+			cv::imshow("Label Image 1", source_image);
+			cv::imshow("Label Image 2", destination_image);
+			cv::waitKey(0);
+		}
 	}
 
 	printf("Processing time = %f secs.\n", time);
@@ -884,17 +942,8 @@ void testMultiTwoViewMotionFitting(
 	printf("Number of found model instances after labeling = %d.\n", max_label);
 	printf("There are %d instances in the reference labeling.\n", reference_model_number);
 
-
 	cv::imwrite("results/source_" + scene_name_ + ".jpg", source_image);
 	cv::imwrite("results/destination_" + scene_name_ + ".jpg", destination_image);
-
-	cv::namedWindow("Label Image 1", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-	cv::namedWindow("Label Image 2", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-	cv::resizeWindow("Label Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
-	cv::resizeWindow("Label Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
-	cv::imshow("Label Image 1", source_image);
-	cv::imshow("Label Image 2", destination_image);
-	cv::waitKey(0);
 
 	source_image.release();
 	destination_image.release();
@@ -908,6 +957,7 @@ void testMultiHomographyFitting(
 	const std::string& input_correspondence_path_, // The path of the detected correspondences
 	const std::string& output_correspondence_path_,  // The path of the correspondences saved with their labels
 	const std::string& output_match_image_path_, // The path where the images with the labelings are saved
+	const double neighborhood_size_, // The size of the neighborhood used inside the sampler.
 	const double confidence_, // The RANSAC confidence value
 	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
 	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
@@ -962,6 +1012,17 @@ void testMultiHomographyFitting(
 	// Initializing the estimator object
 	progx::utils::DefaultHomographyEstimator estimator;
 
+	// Initializing the neighborhood structure based on the provided paramereters
+	typedef gcransac::neighborhood::NeighborhoodGraph<cv::Mat> AbstractNeighborhood;
+	std::unique_ptr<AbstractNeighborhood> neighborhood_graph;
+
+	if constexpr (std::is_same<gcransac::sampler::NapsacSampler<gcransac::neighborhood::FlannNeighborhoodGraph>, _Sampler>())
+		neighborhood_graph = std::unique_ptr<AbstractNeighborhood>(
+			new gcransac::neighborhood::FlannNeighborhoodGraph(&points, neighborhood_size_));
+	else if constexpr (std::is_same<gcransac::sampler::NapsacSampler<gcransac::neighborhood::BruteForceNeighborhoodGraph>, _Sampler>())
+		neighborhood_graph = std::unique_ptr<AbstractNeighborhood>(
+			new gcransac::neighborhood::BruteForceNeighborhoodGraph(&points, neighborhood_size_));
+
 	// Initialize the sampler depending on its type
 	std::unique_ptr<_Sampler> sampler;
 	if constexpr (std::is_same<gcransac::sampler::ProgressiveNapsacSampler<4>, _Sampler>())
@@ -975,13 +1036,19 @@ void testMultiHomographyFitting(
 				static_cast<double>(destination_image.rows) }));
 	else if constexpr (std::is_same<gcransac::sampler::UniformSampler, _Sampler>())
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points));
-	else 
+	else if constexpr (std::is_same<gcransac::sampler::NapsacSampler<gcransac::neighborhood::FlannNeighborhoodGraph>, _Sampler>())
+		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points, neighborhood_graph.get()));
+	else if constexpr (std::is_same<gcransac::sampler::NapsacSampler<gcransac::neighborhood::BruteForceNeighborhoodGraph>, _Sampler>())
+		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points, neighborhood_graph.get()));
+	/*else 
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points,
 			estimator.sampleSize(),
 			20,
 			1000,
 			5,
-			false));
+			false));*/
+			
+			
 
 	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
 	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds

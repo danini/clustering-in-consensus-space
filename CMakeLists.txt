@@ -1,5 +1,4 @@
 cmake_minimum_required(VERSION 3.8)
-
 project(MultiConsensusClustering LANGUAGES CXX)
 
 # indicate if OPENMP should be enabled
@@ -7,7 +6,7 @@ option(USE_OPENMP "Use OPENMP" ON)
 
 # indicate if the sample project should be generated
 option(CREATE_SAMPLE_PROJECT "Create the Project for the traditional multi-model tests." ON)
-option(CREATE_PYTHON_BINDING "Create Pyhton bindings for the project." ON)
+option(CREATE_PYTHON_BINDING "Create Python bindings for the project." ON)
 
 SET (CMAKE_BUILD_TYPE "RELEASE")
 
@@ -24,7 +23,7 @@ ENDIF(CMAKE_COMPILER_IS_GNUCXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_FLAGS "-fpermissive")
+set(CMAKE_CXX_FLAGS "-fpermissive -fPIC")
 
 # ==============================================================================
 # Find OpenCV
@@ -58,7 +57,7 @@ endif()
 # ==============================================================================
 # Includes
 # ==============================================================================
-SET(SOURCE_DIR "src/pyconsensusclustering")
+SET(SOURCE_DIR "src/pymulticonsensus")
 
 include_directories (
 	${PROJECT_SOURCE_DIR}/graph-cut-ransac/src/pygcransac/include
@@ -103,6 +102,21 @@ file(GLOB_RECURSE SRCS_MULTICONSENSUS
 	"${SOURCE_DIR}/include/*.cpp"
 )
 
+# ==============================================================================
+# Structure: Python binding
+# ==============================================================================
+if (CREATE_PYTHON_BINDING)
+	# Generate python module
+	add_subdirectory(lib/pybind11)
+	
+	pybind11_add_module(pymulticonsensus ${SOURCE_DIR}/src/bindings.cpp ${SOURCE_DIR}/src/pymulticonsensus_python.cpp ${HDRS_MULTICONSENSUS} ${SRCS_MULTICONSENSUS} )
+	
+	target_link_libraries(pymulticonsensus PRIVATE  
+		${OpenCV_LIBS} 
+		Eigen3::Eigen 
+		GraphCutRANSAC)
+endif (CREATE_PYTHON_BINDING)
+
 add_library(${PROJECT_NAME} STATIC 
 	${HDRS_MULTICONSENSUS} 
 	${SRCS_MULTICONSENSUS})
@@ -115,22 +129,6 @@ target_link_libraries(${PROJECT_NAME}
 )
 
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib)
-
-# ==============================================================================
-# Structure: Python binding
-# ==============================================================================
-if (CREATE_PYTHON_BINDING)
-	# Generate python module
-	add_subdirectory(lib/pybind11)
-	
-	pybind11_add_module(pymulticonsensus ${SOURCE_DIR}/src/bindings.cpp ${SOURCE_DIR}/src/pymulticonsensus_python.cpp  ${HDRS_MULTICONSENSUS} ${SRCS_MULTICONSENSUS} )
-	
-	target_link_libraries(pymulticonsensus PRIVATE  
-		${OpenCV_LIBS} 
-		Eigen3::Eigen 
-		gflags
-		GraphCutRANSAC)
-endif (CREATE_PYTHON_BINDING)
 	
 # ==============================================================================
 # Structure: Applications
