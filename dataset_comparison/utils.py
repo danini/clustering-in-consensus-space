@@ -8,6 +8,7 @@ import math
 import matplotlib.pyplot as plt
 import random
 import cv2
+import csv
 
 def get_soft_assignment(correspondences, homographies, inlier_threshold):
     model_number = int(homographies.shape[0] / 3)
@@ -42,6 +43,10 @@ def model_type(type_name):
         return 1
     if type_name == "vanishing_point":
         return 2
+    if type_name == "plane":
+        return 3
+    if type_name == "motion":
+        return 4
     return -1
 
 def convert_to_number (s):
@@ -62,6 +67,32 @@ def load_data(dataset):
             data[f]['labels'] = M[:,-1]
         except:
             print(f"Error when loading scene {f}")
+    return data
+
+def load_motion_data(dataset):
+    files = os.listdir(dataset)
+    data = {}
+
+    for f in files:
+        with open(f"{dataset}/{f}/{f}.txt") as file:
+            reader = csv.reader(file, delimiter=' ')
+            line_count = 0
+            M = []
+            labels = []
+            for row in reader:
+                if line_count == 0:
+                    M = np.zeros((int(row[1]), 2 * int(row[0])))
+                    labels = np.zeros(int(row[1]))
+                    line_count += 1
+                else:
+                    numbers = [ float(x) for x in row[1:-1] ]
+                    M[line_count - 1, :] = numbers 
+                    labels[line_count - 1] = int(row[-1]) 
+                    line_count += 1
+                    
+            data[f] = {}
+            data[f]['corrs'] = M
+            data[f]['labels'] = labels
     return data
 
 def download_datasets(url_base, datasets):
