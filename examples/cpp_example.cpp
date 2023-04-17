@@ -6,9 +6,9 @@
 #include <Eigen/Eigen>
 
 #include "GCRANSAC.h"
-#include "progx_utils.h"
+#include "mcons_utils.h"
 #include "losses.h"
-#include "progressive_x_prime.h"
+#include "multi_consensus_fitting.h"
 #include "median_shift_clustering.h"
 #include "mean_shift_clustering.h"
 #include "dbscan_clustering.h"
@@ -48,8 +48,6 @@ DEFINE_bool(test_homography_fitting, true,
 	"A flag to decide if homographies should be tuned.");
 DEFINE_bool(test_two_view_motion_fitting, true,
 	"A flag to decide if two-view motions (i.e., fundamental matrices) should be tuned.");
-DEFINE_bool(test_motion_fitting, true,
-	"A flag to decide if video motions should be tuned.");
 DEFINE_bool(visualize, true,
 	"A flag to decide if the results should be visualized");
 DEFINE_bool(visualize_inner_steps, false,
@@ -63,11 +61,11 @@ DEFINE_int32(repetitions, 5,
 DEFINE_int32(sampler, 1,
 	"(0) Uniform sampler, (1) Progressive NAPSAC, (2) Connected Component sampler, (3) NAPSAC sampler (FLANN neighborhood), (4) NAPSAC sampler (BF neighborhood)");
 
-enum Problem { Homography, TwoViewMotion, RigidMotion, Pose6D };
+enum Problem { Homography, TwoViewMotion };
 
 typedef clustering::density::DBScanClustering<
-	progx::ModelData,
-	clustering::distances::TanimotoDistance<progx::ModelData>> ClusteringMethod;
+	mcons::ModelData,
+	clustering::distances::TanimotoDistance<mcons::ModelData>> ClusteringMethod;
 
 template <typename _Sampler>
 void testMultiHomographyFitting(
@@ -89,22 +87,6 @@ void testMultiHomographyFitting(
 	const bool visualize_inner_steps_,
 	const bool has_detected_correspondences_ = false);
 
-void testMultiMotionFitting(
-	const std::string& scene_name_, // The name of the current scene 
-	const std::string& video_path_, // The path of the source image
-	const std::string& input_correspondence_path_, // The path of the detected correspondences
-	const std::string& output_correspondence_path_,  // The path of the correspondences saved with their labels
-	const double confidence_, // The RANSAC confidence value
-	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
-	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
-	const size_t starting_hypothesis_number_,
-	const size_t added_hypothesis_number_,
-	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
-	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
-	const bool visualize_results_, // A flag to determine if the results should be visualized
-	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
-	const bool has_detected_correspondences_);
-
 template <typename _Sampler>
 void testMultiTwoViewMotionFitting(
 	const std::string& scene_name_, // The name of the current scene 
@@ -124,18 +106,6 @@ void testMultiTwoViewMotionFitting(
 	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
 	const bool has_detected_correspondences_);
 
-void testMulti2DLineFitting(
-	const std::string& data_path_,
-	const std::string& ground_truth_path_,
-	const double confidence_, // The RANSAC confidence value
-	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
-	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
-	const size_t starting_hypothesis_number_,
-	const size_t added_hypothesis_number_,
-	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
-	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
-	const bool visualize_results_); // A flag to determine if the results should be visualized
-
 bool initializeScene(const std::string& scene_name_,
 	std::string& src_image_path_,
 	std::string& dst_image_path_,
@@ -148,8 +118,6 @@ bool initializeScene(const std::string& scene_name_,
 double rotationError(const Eigen::Matrix3d& reference_rotation_,
 	const Eigen::Matrix3d& estimated_rotation_);
 
-void poseFromMultiHomographyTest();
-
 void drawMatches(
 	const cv::Mat& points_,
 	const std::vector<size_t>& inliers_,
@@ -159,27 +127,19 @@ void drawMatches(
 	int circle_radius_,
 	const cv::Scalar& color_);
 
-std::mutex writing_mutex;
-int settings_number = 0;
-std::string currentTime;
-
 std::vector<std::string> getAvailableTestScenes(const Problem& problem_);
-void runTwoViewMotion(const progx::MultiModelSettings& kSettings_);
-void runHomography(const progx::MultiModelSettings& kSettings_,
+void runTwoViewMotion(const mcons::MultiModelSettings& kSettings_);
+void runHomography(const mcons::MultiModelSettings& kSettings_,
 	const double kNeighborhoodRadius_);
-void runRigidMotion(const progx::MultiModelSettings& kSettings_);
 
 int main(int argc, char** argv)
 {
 	// Parsing the flags
 	gflags::ParseCommandLineFlags(&argc, &argv, true);
 
-	// Save the current date as a string
-	currentTime = getCurrentDateAndTime("%Y_%m_%d_%H_%M_%S");
-
 	if (FLAGS_test_two_view_motion_fitting)
 	{
-		progx::MultiModelSettings parameters;
+		mcons::MultiModelSettings parameters;
 		parameters.minimumInlierNumber = 20;
 		parameters.maximumIterations = 75;
 		parameters.inlierOutlierThreshold = 2.5;
@@ -193,7 +153,7 @@ int main(int argc, char** argv)
 
 	if (FLAGS_test_homography_fitting)
 	{
-		progx::MultiModelSettings parameters;
+		mcons::MultiModelSettings parameters;
 		parameters.minimumInlierNumber = 20;
 		parameters.maximumIterations = 75;
 		parameters.inlierOutlierThreshold = 2.5;
@@ -204,25 +164,11 @@ int main(int argc, char** argv)
 
 		runHomography(parameters, 20.0);
 	}
-
-	if (FLAGS_test_motion_fitting)
-	{
-		progx::MultiModelSettings parameters;
-		parameters.minimumInlierNumber = 20;
-		parameters.maximumIterations = 75;
-		parameters.inlierOutlierThreshold = 2.5;
-		parameters.modelDistanceThreshold = 0.85;
-		parameters.confidence = 0.999;
-		parameters.startingHypothesisNumber = 10;
-		parameters.addedHypothesisNumber = 10;
-
-		runRigidMotion(parameters);
-	}
 	
 	return 0;
 }
 
-void runTwoViewMotion(const progx::MultiModelSettings& kSettings_)
+void runTwoViewMotion(const mcons::MultiModelSettings& kSettings_)
 {
 	for (const std::string& scene : getAvailableTestScenes(Problem::TwoViewMotion))
 	{
@@ -281,7 +227,7 @@ void runTwoViewMotion(const progx::MultiModelSettings& kSettings_)
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
 				true);  // In this dataset, the correspondences and a reference labeling are provided
-		/*else
+		else
 			testMultiTwoViewMotionFitting<gcransac::sampler::ConnectedComponentSampler>(
 				scene, // The name of the current scene
 				src_image_path, // The source image's path
@@ -298,11 +244,11 @@ void runTwoViewMotion(const progx::MultiModelSettings& kSettings_)
 				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-				true);  // In this dataset, the correspondences and a reference labeling are provided*/
+				true);  // In this dataset, the correspondences and a reference labeling are provided
 	}
 }
 
-void runHomography(const progx::MultiModelSettings& kSettings_,
+void runHomography(const mcons::MultiModelSettings& kSettings_,
 	const double kNeighborhoodRadius_)
 {
 	for (const std::string& scene : getAvailableTestScenes(Problem::Homography))
@@ -405,7 +351,7 @@ void runHomography(const progx::MultiModelSettings& kSettings_,
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
 				true);  // In this dataset, the correspondences and a reference labeling are provided
-		/*else
+		else
 			testMultiHomographyFitting<gcransac::sampler::ConnectedComponentSampler>(
 				scene, // The name of the current scene
 				src_image_path, // The source image's path
@@ -422,49 +368,8 @@ void runHomography(const progx::MultiModelSettings& kSettings_,
 				kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
 				FLAGS_visualize, // A flag to determine if the results should be visualized
 				FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-				true);  // In this dataset, the correspondences and a reference labeling are provided*/
+				true);  // In this dataset, the correspondences and a reference labeling are provided
 	}	
-}
-
-void runRigidMotion(const progx::MultiModelSettings& kSettings_)
-{
-	for (const std::string& scene : getAvailableTestScenes(Problem::RigidMotion))
-	{
-		printf("Processed scene = %s.\n", scene.c_str());
-
-		std::string src_image_path, // Path of the source image
-			dst_image_path, // Path of the destination image
-			input_correspondence_path, // Path where the detected correspondences are saved
-			output_correspondence_path, // Path where the inlier correspondences are saved
-			output_matched_image_path; // Path where the matched image is saved
-
-		// Initializing the paths 
-		if (!initializeScene(scene, // The scene's name
-			src_image_path, // The path of the source image
-			dst_image_path, // The path of the destination image
-			input_correspondence_path, // The path of the detected correspondences
-			output_correspondence_path, // The path of the correspondences saved with their labels
-			output_matched_image_path, // The path where the images with the labelings are saved
-			FLAGS_dataset_path, // The root directory where the "results" and "data" folder are
-			true)) // In this dataset, the correspondences and a reference labeling are provided
-			continue;
-
-		testMultiMotionFitting(
-			scene, // The name of the current scene
-			src_image_path, // The source image's path
-			input_correspondence_path, // The path where the detected correspondences (before the robust estimation) will be saved (or loaded from if exists)
-			output_correspondence_path, // The path where the inliers of the estimated fundamental matrices will be saved
-			kSettings_.confidence, // The RANSAC confidence value
-			kSettings_.inlierOutlierThreshold, // The used inlier-outlier threshold in GC-RANSAC.
-			kSettings_.maximumIterations,
-			kSettings_.startingHypothesisNumber,
-			kSettings_.addedHypothesisNumber,
-			kSettings_.modelDistanceThreshold,
-			kSettings_.minimumInlierNumber, // The minimum number of inlier for a model to be kept.
-			FLAGS_visualize, // A flag to determine if the results should be visualized
-			FLAGS_visualize_inner_steps, // A flag to determine if the inner steps should be visualized.
-			true);  // In this dataset, the correspondences and a reference labeling are provided
-	}
 }
 
 std::vector<std::string> getAvailableTestScenes(const Problem& problem_)
@@ -486,18 +391,6 @@ std::vector<std::string> getAvailableTestScenes(const Problem& problem_)
 			"biscuit", "book", "breadcube", "breadtoy",
 			"cube", "cubetoy", "game", "gamebiscuit",
 			"cubechips", "boardgame" };
-	case Problem::Pose6D:
-		// A scene from the T-LESS dataset. Correspondences are obtained by the EPOS method.
-		return { "tless" };
-	case Problem::RigidMotion:
-		return { "cars1", "cars10_g12", "cars10_g13", "cars10_g23",
-			"cars2", "cars2B_g12", "cars2B_g13", "cars2B_g23",
-			"cars2_06_g12", "cars2_06_g13", "cars2_06_g23", "cars2_07_g12",
-			"cars2_07_g13", "cars2_07_g23", "cars3_g12", "cars3_g13",
-			"cars3_g23", "cars4", "cars5_g12", "cars5_g13",
-			"cars5_g23", "cars6", "cars7", "cars8",
-			"cars9_g12", "cars9_g13", "cars9_g23", "truck1",
-			"truck2", "kanatani1", "kanatani2" };
 	default:
 		return {};
 	}
@@ -573,183 +466,6 @@ double rotationError(const Eigen::Matrix3d& reference_rotation_,
 	return radian_to_degree_multiplier * std::acos(error_cos);
 }
 
-void testMultiMotionFitting(
-	const std::string& scene_name_, // The name of the current scene 
-	const std::string& video_path_, // The path of the source image
-	const std::string& input_correspondence_path_, // The path of the detected correspondences
-	const std::string& output_correspondence_path_,  // The path of the correspondences saved with their labels
-	const double confidence_, // The RANSAC confidence value
-	const double inlier_outlier_threshold_, // The used inlier-outlier threshold in GC-RANSAC.
-	const double maximum_iterations, // The weight of the spatial coherence term in the graph-cut energy minimization.
-	const size_t starting_hypothesis_number_,
-	const size_t added_hypothesis_number_,
-	const double maximum_tanimoto_similarity_, // The maximum Tanimoto similarity of the proposal and compound instances.
-	const double minimum_point_number_, // The minimum number of inlier for a model to be kept.
-	const bool visualize_results_, // A flag to determine if the results should be visualized
-	const bool visualize_inner_steps_, // A flag to determine if the inner steps should be visualized.
-	const bool has_detected_correspondences_)
-{
-	static std::mutex saving_mutex;
-
-	// Read point tracks
-	cv::Mat originalPoints, points;
-	std::vector<int> reference_labeling;
-	int frames = 0;
-	int gt_model_number = 0;
-	readAnnotatedPointSequence(input_correspondence_path_, frames, originalPoints, reference_labeling);
-	projectDataToRDimensionalSpace(originalPoints, points, 5);
-	points = points.t();
-
-	size_t reference_model_number = 0;
-	for (const auto& label : reference_labeling)
-		reference_model_number = MAX(reference_model_number, label);
-
-	if (true) {
-		// The main sampler is used inside the local optimization
-		std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
-		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
-		gcransac::sampler::UniformSampler sampler(&points); 
-		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
-		std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
-		printf("Uniform sampler initialization time = %f secs.\n", elapsed_seconds.count());
-
-		// Applying Progressive-X
-		typedef progx::MultiConsensusFitting<
-			clustering::density::DBScanClustering<
-			progx::ModelData,
-			clustering::distances::TanimotoDistance<progx::ModelData>>,
-			clustering::distances::TanimotoDistance<progx::ModelData>,
-			clustering::losses::MAGSACLoss<double, progx::utils::DefaultLinearSubspaceEstimator, 4>,
-			progx::utils::DefaultLinearSubspaceEstimator,
-			gcransac::sampler::UniformSampler> ProgXPrime;
-
-		ProgXPrime progressiveXPrime;
-
-		auto& settings = progressiveXPrime.getMutableSettings();
-		settings.inlierOutlierThreshold = inlier_outlier_threshold_;
-		settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
-		settings.maximumIterations = maximum_iterations;
-		settings.minimumInlierNumber = minimum_point_number_;
-		settings.startingHypothesisNumber = starting_hypothesis_number_;
-		settings.addedHypothesisNumber = added_hypothesis_number_;
-		settings.confidence = confidence_;
-
-		std::vector<gcransac::Model> models;
-		std::vector<progx::ModelData> modelData;
-
-		start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
-		progressiveXPrime.run(
-			points,
-			sampler,
-			models,
-			modelData);
-		end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
-		elapsed_seconds = end - start; // The elapsed time in seconds
-		double time = elapsed_seconds.count();
-
-		progx::utils::DefaultLinearSubspaceEstimator estimator;
-		for (size_t modelIdx = 0; modelIdx < models.size(); ++modelIdx)
-		{
-			size_t inlierNums = 0;
-			for (size_t pointIdx = 0; pointIdx < points.rows; ++pointIdx)
-			{
-				const double distance =
-					estimator.squaredResidual(
-						points.row(pointIdx),
-						models[modelIdx]);
-
-				if (distance < inlier_outlier_threshold_ * inlier_outlier_threshold_)
-				{
-					++inlierNums;
-				}
-			}
-
-			std::cout << "Inliers = " << inlierNums << std::endl;
-		}
-
-		// Calculate the misclassification error if a reference labeling is known
-		double misclassification_error1 = getMisclassificationError<progx::utils::DefaultLinearSubspaceEstimator>(
-			modelData,
-			reference_labeling,
-			modelData.size(),
-			reference_model_number);
-
-		// Get a labeling
-		for (double spatialWeight = 0.0; spatialWeight <= 1.0; spatialWeight += 0.1)
-			for (double labelCost = 0.0; labelCost <= 20.0; labelCost += 1)
-			{
-				std::vector<size_t> labels;
-				std::vector<int> intLabels;
-				size_t max_label;
-				getLabeling<progx::utils::DefaultLinearSubspaceEstimator>(
-					points,
-					models,
-					0.01,
-					inlier_outlier_threshold_,
-					spatialWeight,
-					labelCost,
-					labels,
-					max_label);
-				intLabels.resize(labels.size());
-
-				std::vector<cv::Scalar> colors(max_label + 1);
-				for (auto& color : colors)
-					color = cv::Scalar((double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255, (double)rand() / RAND_MAX * 255);
-
-				for (size_t pointIdx = 0; pointIdx < labels.size(); ++pointIdx)
-				{
-					intLabels[pointIdx] = labels[pointIdx];
-					if (intLabels[pointIdx] == max_label)
-						intLabels[pointIdx] = -1;
-				}
-
-				double misclassification_error2 = getMisclassificationError(
-					intLabels,
-					reference_labeling,
-					max_label,
-					reference_model_number);
-
-				double ME = (misclassification_error1 == -1 || misclassification_error2 == -1 ?
-					MAX(misclassification_error1, misclassification_error2) :
-					MIN(misclassification_error1, misclassification_error2));
-
-				printf("Processing time = %f secs.\n", time);
-				printf("Misclassification error <= (%f, %f)\%.\n", misclassification_error1, misclassification_error2);
-				printf("Number of found model instances = %d (there are %d instances in the reference labeling).\n", modelData.size(), reference_model_number);
-
-				saving_mutex.lock();
-				std::ofstream file("results/tuning_motion_" + currentTime + ".csv", std::fstream::app);
-				file << scene_name_ << ";"
-					<< "tanimoto" << ";"
-					<< "magsac" << ";"
-					<< "dbscan" << ";"
-					<< spatialWeight << ";"
-					<< labelCost << ";"
-					<< confidence_ << ";"
-					<< starting_hypothesis_number_ << ";"
-					<< added_hypothesis_number_ << ";"
-					<< minimum_point_number_ << ";"
-					<< maximum_iterations << ";"
-					<< inlier_outlier_threshold_ << ";"
-					<< maximum_tanimoto_similarity_ << ";"
-					<< minimum_point_number_ << ";"
-					<< time << ";"
-					<< ME << ";"
-					<< (int)modelData.size() - (int)reference_model_number << "\n";
-				file.close();
-				saving_mutex.unlock();
-			}
-
-		/*cv::namedWindow("Image 1", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-		cv::namedWindow("Image 2", cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
-		cv::resizeWindow("Image 1", cv::Size(1024, 1024.0 / source_image.cols * source_image.rows));
-		cv::resizeWindow("Image 2", cv::Size(1024, 1024.0 / destination_image.cols * destination_image.rows));
-		cv::imshow("Image 1", source_image);
-		cv::imshow("Image 2", destination_image);
-		cv::waitKey(0);*/
-	}
-}
-
 template <typename _Sampler>
 void testMultiTwoViewMotionFitting(
 	const std::string& scene_name_, // The name of the current scene 
@@ -804,7 +520,7 @@ void testMultiTwoViewMotionFitting(
 			points); // The detected point correspondences. Each row is of format "x1 y1 x2 y2"
 
 	// Initializing the estimator object
-	progx::utils::DefaultFundamentalMatrixEstimator estimator;
+	mcons::utils::DefaultFundamentalMatrixEstimator estimator;
 
 	std::chrono::time_point<std::chrono::system_clock> start, end; // Variables for time measurement
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
@@ -815,37 +531,30 @@ void testMultiTwoViewMotionFitting(
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(
 			&points, // All data points
 			{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
-			progx::utils::DefaultFundamentalMatrixEstimator::sampleSize(), // The size of a minimal sample
+			mcons::utils::DefaultFundamentalMatrixEstimator::sampleSize(), // The size of a minimal sample
 			{ static_cast<double>(source_image.cols), // The width of the source image
 				static_cast<double>(source_image.rows), // The height of the source image
 				static_cast<double>(destination_image.cols), // The width of the destination image
 				static_cast<double>(destination_image.rows) }));
 	else if constexpr (std::is_same<gcransac::sampler::UniformSampler, _Sampler>())
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points));
-	else
-		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points,
-			estimator.sampleSize(),
-			20,
-			200,
-			5,
-			false));
 	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
 	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
 	printf("Sampler initialization time = %f secs.\n", elapsed_seconds.count());
 
 	// Applying Progressive-X
-	typedef progx::MultiConsensusFitting<
+	typedef mcons::MultiConsensusFitting<
 		clustering::density::DBScanClustering<
-		progx::ModelData,
-		clustering::distances::TanimotoDistance<progx::ModelData>>,
-		clustering::distances::TanimotoDistance<progx::ModelData>,
-		clustering::losses::MAGSACLoss<double, progx::utils::DefaultFundamentalMatrixEstimator, 4>,
-		progx::utils::DefaultFundamentalMatrixEstimator,
-		_Sampler> ProgXPrime;
+		mcons::ModelData,
+		clustering::distances::TanimotoDistance<mcons::ModelData>>,
+		clustering::distances::TanimotoDistance<mcons::ModelData>,
+		clustering::losses::MAGSACLoss<double, mcons::utils::DefaultFundamentalMatrixEstimator, 4>,
+		mcons::utils::DefaultFundamentalMatrixEstimator,
+		_Sampler> MultiConsensusEstimator;
 
-	ProgXPrime progressiveXPrime;
+	MultiConsensusEstimator multiEstimator;
 
-	auto& settings = progressiveXPrime.getMutableSettings();
+	auto& settings = multiEstimator.getMutableSettings();
 	settings.inlierOutlierThreshold = inlier_outlier_threshold_;
 	settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
 	settings.maximumIterations = maximum_iterations;
@@ -855,10 +564,10 @@ void testMultiTwoViewMotionFitting(
 	settings.confidence = confidence_;
 
 	std::vector<gcransac::Model> models;
-	std::vector<progx::ModelData> modelData;
+	std::vector<mcons::ModelData> modelData;
 
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
-	progressiveXPrime.run(
+	multiEstimator.run(
 		points,
 		*sampler,
 		models,
@@ -874,7 +583,7 @@ void testMultiTwoViewMotionFitting(
 	std::vector<size_t> labels;
 	std::vector<int> intLabels;
 	size_t max_label;
-	getLabeling<progx::utils::DefaultFundamentalMatrixEstimator>(
+	getLabeling<mcons::utils::DefaultFundamentalMatrixEstimator>(
 		points,
 		models,
 		20.0,
@@ -1010,7 +719,7 @@ void testMultiHomographyFitting(
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
 
 	// Initializing the estimator object
-	progx::utils::DefaultHomographyEstimator estimator;
+	mcons::utils::DefaultHomographyEstimator estimator;
 
 	// Initializing the neighborhood structure based on the provided paramereters
 	typedef gcransac::neighborhood::NeighborhoodGraph<cv::Mat> AbstractNeighborhood;
@@ -1029,7 +738,7 @@ void testMultiHomographyFitting(
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(
 			&points, // All data points
 			{ 16, 8, 4, 2 }, // The layer structure of the sampler's multiple grids
-			progx::utils::DefaultHomographyEstimator::sampleSize(), // The size of a minimal sample
+			mcons::utils::DefaultHomographyEstimator::sampleSize(), // The size of a minimal sample
 			{ static_cast<double>(source_image.cols), // The width of the source image
 				static_cast<double>(source_image.rows), // The height of the source image
 				static_cast<double>(destination_image.cols), // The width of the destination image
@@ -1039,32 +748,23 @@ void testMultiHomographyFitting(
 	else if constexpr (std::is_same<gcransac::sampler::NapsacSampler<gcransac::neighborhood::FlannNeighborhoodGraph>, _Sampler>())
 		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points, neighborhood_graph.get()));
 	else if constexpr (std::is_same<gcransac::sampler::NapsacSampler<gcransac::neighborhood::BruteForceNeighborhoodGraph>, _Sampler>())
-		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points, neighborhood_graph.get()));
-	/*else 
-		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points,
-			estimator.sampleSize(),
-			20,
-			1000,
-			5,
-			false));*/
-			
-			
+		sampler = std::unique_ptr<_Sampler>(new _Sampler(&points, neighborhood_graph.get()));			
 
 	end = std::chrono::system_clock::now(); // The end time of the neighborhood calculation
 	std::chrono::duration<double> elapsed_seconds = end - start; // The elapsed time in seconds
 	printf("Sampler initialization time = %f secs.\n", elapsed_seconds.count());
 
 	// Applying Progressive-X
-	using ProgXPrime = progx::MultiConsensusFitting<
+	using MultiConsensusEstimator = mcons::MultiConsensusFitting<
 		ClusteringMethod,
-		clustering::distances::TanimotoDistance<progx::ModelData>,
+		clustering::distances::TanimotoDistance<mcons::ModelData>,
 		clustering::losses::MAGSACLoss<double, gcransac::utils::DefaultHomographyEstimator, 4>,
-		progx::utils::DefaultHomographyEstimator,
+		mcons::utils::DefaultHomographyEstimator,
 		_Sampler>;
 
-	ProgXPrime progressiveXPrime;
+	MultiConsensusEstimator multiEstimator;
 
-	auto& settings = progressiveXPrime.getMutableSettings();
+	auto& settings = multiEstimator.getMutableSettings();
 	settings.inlierOutlierThreshold = inlier_outlier_threshold_;
 	settings.modelDistanceThreshold = maximum_tanimoto_similarity_;
 	settings.maximumIterations = 100;
@@ -1074,10 +774,10 @@ void testMultiHomographyFitting(
 	settings.confidence = confidence_;
 
 	std::vector<gcransac::Model> models;
-	std::vector<progx::ModelData> modelData;
+	std::vector<mcons::ModelData> modelData;
 
 	start = std::chrono::system_clock::now(); // The starting time of the neighborhood calculation
-	progressiveXPrime.run(
+	multiEstimator.run(
 		points,
 		*sampler,
 		models,
@@ -1088,13 +788,13 @@ void testMultiHomographyFitting(
 
 	{
 		double spatialWeight = 0.0;
-		double labelCost = 15.0;
+		double labelCost = minimum_point_number_;
 		{
 			// Get a labeling
 			std::vector<size_t> labels;
 			std::vector<int> intLabels;
 			size_t max_label;
-			getLabeling<progx::utils::DefaultHomographyEstimator>(
+			getLabeling<mcons::utils::DefaultHomographyEstimator>(
 				points,
 				models,
 				20.0,
