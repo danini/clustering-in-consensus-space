@@ -351,3 +351,7 @@ MigrationBackup/
 
 # Build folder
 build/
+*.csv
+dataset_comparison/adelaide*
+dataset_comparison/hopkins*
+src/pymulticonsensus.egg*
