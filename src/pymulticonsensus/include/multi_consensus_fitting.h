@@ -1,5 +1,6 @@
 #pragma once
 
+#include <iostream>
 #include <vector>
 #include <opencv2/core/core.hpp>
 #include <opencv2/highgui/highgui.hpp>
@@ -9,9 +10,9 @@
 #include "settings.h"
 #include "statistics.h"
 #include "modified_scoring_function.h"
-//#include "connected_component_sampler.h"
+#include "connected_component_sampler.h"
 
-namespace progx
+namespace mcons
 {
 	struct MultiModelSettings
 	{
@@ -121,7 +122,7 @@ namespace progx
 		class _RobustLoss,
 		class _ModelEstimator, // The model estimator used for estimating the instance parameters from a set of points
 		class _Sampler,
-		class _ScoringFunction = progx::MSACScoringFunction<_ModelEstimator>> // The sampler used in the main RANSAC loop of GC-RANSAC
+		class _ScoringFunction = mcons::MSACScoringFunction<_ModelEstimator>> // The sampler used in the main RANSAC loop of GC-RANSAC
 		class MultiConsensusFitting
 	{
 	public:
@@ -350,7 +351,7 @@ namespace progx
 			double theoreticalHypothesesNumber =
 				std::log(1.0 - settings.generationConfidence) / std::log(1.0 - std::pow((double)coveredPoints / kPointNumber, _ModelEstimator::sampleSize()));
 
-			nextHypothesesNumber = MIN(settings.addedHypothesisNumber, totalHypothesisNumber - theoreticalHypothesesNumber); 
+			nextHypothesesNumber = settings.addedHypothesisNumber; 
 		}
 
 		for (size_t modelIdx = 0; modelIdx < models_.size(); ++modelIdx)
@@ -393,7 +394,7 @@ namespace progx
 	{
 		constexpr size_t kSampleNumber = _ModelEstimator::sampleSize();
 		const size_t kPointNumber = points_.rows;
-		const static progx::Score emptyScore;
+		const static mcons::Score emptyScore;
 		std::vector<size_t> currentExtendedSample;
 		std::unique_ptr<size_t[]> currentSample(new size_t[kSampleNumber]); // Minimal sample for model fitting
 		int currentHypothesisNumber;
@@ -412,7 +413,7 @@ namespace progx
 			++totalHypothesisNumber_;
 
 			// If the sampling is not successful, try again.
-			/*if constexpr (std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
+			if constexpr (std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
 			{
 				if (!sample<kSampleNumber>(
 					sampler_,
@@ -423,7 +424,7 @@ namespace progx
 					continue;
 				}
 			}
-			else*/
+			else
 			{
 				if (!sample<kSampleNumber>(
 					pointPool_,
@@ -438,20 +439,20 @@ namespace progx
 
 			// Check if the selected sample is valid before estimating the model
 			// parameters which usually takes more time. 
-			/*if constexpr (!std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
+			if constexpr (!std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
 				if (!estimator_.isValidSample(points_, // All points
 					currentSample.get())) // The current sample
 				{
 					++attempts;
 					--hypothesesIdx;
 					continue;
-				}*/
+				}
 
 			currentHypothesisNumber = hypothesesPool_.size();
 			tmpHypotheses.clear();
 
 			// Estimate the model parameters using the current sample
-			/*if constexpr (std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
+			if constexpr (std::is_same<gcransac::sampler::ConnectedComponentSampler, _Sampler>())
 			{
 				if (currentExtendedSample.size() == kSampleNumber)
 				{
@@ -477,7 +478,7 @@ namespace progx
 					}
 				}
 			}
-			else*/
+			else
 			{
 				if (!estimator_.estimateModel(points_,  // All points
 					currentSample.get(), // The current sample
@@ -495,7 +496,7 @@ namespace progx
 				auto& model = tmpHypotheses[innerHypothesisIdx];
 
 				// Calculate the consensus set of the current hypothesis
-				progx::Score score = scoringFunction->getScore(
+				mcons::Score score = scoringFunction->getScore(
 					points_, // All points
 					model, // The current model parameters
 					estimator_, // The estimator 
@@ -627,7 +628,7 @@ namespace progx
 		gcransac::Model& model_,
 		std::vector<size_t>& inliers_) const
 	{
-		progx::Score bestScore;
+		mcons::Score bestScore;
 		std::vector<size_t> tmpInliers;
 		std::vector<gcransac::Model> tmpModel(1);
 		std::vector<double> weights(points_.rows, 0.0);
@@ -638,7 +639,7 @@ namespace progx
 		{
 			std::fill(std::begin(weights), std::end(weights), 0.0);
 
-			progx::Score score = scoringFunction->getScore(
+			mcons::Score score = scoringFunction->getScore(
 				points_, // All points
 				tmpModel[0], // The current model parameters
 				estimator_, // The estimator 
@@ -861,5 +862,3 @@ namespace progx
 			_SampleSize); // The number of points to be selected
 	}
 }
-
-//#include "progressive_x_prime.cpp"

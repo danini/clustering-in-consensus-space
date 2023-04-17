@@ -48,7 +48,7 @@
 
 #include "estimators/solver_homography_four_point.h"
 
-namespace progx
+namespace mcons
 {
 	namespace estimator
 	{

@@ -51,7 +51,7 @@
 
 #include "estimators/solver_linear_model.h"
 
-namespace progx
+namespace mcons
 {
 	namespace estimator
 	{

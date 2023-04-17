@@ -20,7 +20,7 @@
 #include <Eigen/Eigen>
 
 #include "PEARL.h"
-#include "progressive_x_prime.h"
+#include "multi_consensus_fitting.h"
 #include "brute_force_neighborhood_graph.h"
 
 /****************************************
@@ -178,7 +178,7 @@ void getLabeling(
 
 template <typename _ModelEstimator>
 inline double getMisclassificationError(
-	std::vector< progx::ModelData > const& models,
+	std::vector< mcons::ModelData > const& models,
 	std::vector<int> const& annotation,
 	int K,
 	int K_annot)

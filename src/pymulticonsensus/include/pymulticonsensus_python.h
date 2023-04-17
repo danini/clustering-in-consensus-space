@@ -16,6 +16,22 @@ int find6DPoses_(
 	const size_t& minimum_point_number,
 	const int& maximum_model_number);
 
+int findPlanes_(
+	std::vector<double>& correspondences_,
+	std::vector<double>& planes_,
+	const double& kInlierOutlierThreshold_,
+	const double& kConfidence_,
+	const double& kNeighborhoodRadius_,
+	const double& kMaximumTanimotoSimilarity_,
+	const size_t& kStartingHypothesisNumber_,
+	const size_t& kAddedHypothesisNumber_,
+	const size_t& kMaximumIterations_,
+	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
+	const size_t& kSamplerId_);
+
 int findHomographies_(
 	std::vector<double>& correspondences_,
 	std::vector<double>& homographies_,
@@ -31,6 +47,9 @@ int findHomographies_(
 	const size_t& kAddedHypothesisNumber_,
 	const size_t& kMaximumIterations_,
 	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
 	const size_t& kSamplerId_);
 
 int findTwoViewMotions_(
@@ -48,6 +67,25 @@ int findTwoViewMotions_(
 	const size_t& kAddedHypothesisNumber_,
 	const size_t& kMaximumIterations_,
 	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
+	const size_t& kSamplerId_);
+
+int findRigidMotions_(
+	std::vector<double>& subspaces_,
+	std::vector<double>& motions_,
+	const double& kInlierOutlierThreshold_,
+	const double& kConfidence_,
+	const double& kNeighborhoodRadius_,
+	const double& kMaximumTanimotoSimilarity_,
+	const size_t& kStartingHypothesisNumber_,
+	const size_t& kAddedHypothesisNumber_,
+	const size_t& kMaximumIterations_,
+	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
 	const size_t& kSamplerId_);
 	
 int findVanishingPoints_(

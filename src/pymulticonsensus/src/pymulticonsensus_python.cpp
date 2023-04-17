@@ -11,9 +11,9 @@
 #include <sys/stat.h>
 
 #include "GCRANSAC.h"
-#include "progx_utils.h"
+#include "mcons_utils.h"
 #include "losses.h"
-#include "progressive_x_prime.h"
+#include "multi_consensus_fitting.h"
 
 #include "median_shift_clustering.h"
 #include "mean_shift_clustering.h"
@@ -30,7 +30,7 @@
 #include "samplers/prosac_sampler.h"
 #include "samplers/progressive_napsac_sampler.h"
 #include "samplers/napsac_sampler.h"
-// #include "connected_component_sampler.h"
+#include "connected_component_sampler.h"
 
 #include "modified_fundamental_estimator.h"
 #include "solver_homography_three_point.h"
@@ -68,6 +68,7 @@ int find6DPoses_(
 	const size_t& minimum_point_number,
 	const int& maximum_model_number)
 {
+	fprintf(stderr, "Multiple 6D pose fitting is not yet implemented.");
 	return 0;
 }
 
@@ -86,6 +87,9 @@ int findVanishingPoints_(
 	const size_t& kMinimumPointNumber_,
 	const size_t& kSamplerId_)
 {
+	fprintf(stderr, "Multiple vanishing point fitting is not yet implemented.");
+	return 0;
+
 	// Initializing the estimator object
 	DefaultVanishingPointEstimator estimator;
 
@@ -110,17 +114,14 @@ int findVanishingPoints_(
 		return 0;
 	}
 
-	// The local optimization sampler is used inside the local optimization
-	gcransac::sampler::UniformSampler local_optimization_sampler(&lines);
-
 	std::vector<gcransac::Model> models;
-	std::vector<progx::ModelData> modelData;
+	std::vector<mcons::ModelData> modelData;
 
-	typedef progx::MultiConsensusFitting<
+	typedef mcons::MultiConsensusFitting<
 		clustering::density::DBScanClustering<
-		progx::ModelData,
-		clustering::distances::TanimotoDistance<progx::ModelData>>,
-		clustering::distances::TanimotoDistance<progx::ModelData>,
+		mcons::ModelData,
+		clustering::distances::TanimotoDistance<mcons::ModelData>>,
+		clustering::distances::TanimotoDistance<mcons::ModelData>,
 		clustering::losses::MAGSACLoss<double, DefaultVanishingPointEstimator, 4>,
 		DefaultVanishingPointEstimator,
 		AbstractSampler> ActualMultiConsensusMethod;
@@ -171,10 +172,13 @@ int findHomographies_(
 	const size_t& kAddedHypothesisNumber_,
 	const size_t& kMaximumIterations_,
 	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
 	const size_t& kSamplerId_)
 {
 	// Initializing the estimator object
-	progx::utils::DefaultHomographyEstimator estimator;
+	mcons::utils::DefaultHomographyEstimator estimator;
 
 	const size_t num_tents = correspondences_.size() / 4;
 	cv::Mat points(num_tents, 4, CV_64F, &correspondences_[0]);
@@ -189,17 +193,47 @@ int findHomographies_(
 	else if (kSamplerId_ == 3)
 		neighborhood_graph = std::unique_ptr<AbstractNeighborhood>(
 			new gcransac::neighborhood::BruteForceNeighborhoodGraph(&points, kNeighborhoodRadius_));
+			
+	std::vector<gcransac::Model> models;
+	std::vector<mcons::ModelData> modelData;
 
 	// Initialize the samplers
 	// The main sampler is used for sampling in the main RANSAC loop
 	constexpr size_t kSampleSize = gcransac::utils::DefaultHomographyEstimator::sampleSize();
-	typedef gcransac::sampler::Sampler<cv::Mat, size_t> AbstractSampler;
-	std::unique_ptr<AbstractSampler> main_sampler;
+
 	if (kSamplerId_ == 0) // Initializing a RANSAC-like uniformly random sampler
-		main_sampler = std::unique_ptr<AbstractSampler>(new gcransac::sampler::UniformSampler(&points));
-	else if (kSamplerId_ == 1) // Initializing a Progressive NAPSAC sampler. This requires the points to be ordered according to the quality.
-	{				
-		main_sampler = std::unique_ptr<AbstractSampler>(new gcransac::sampler::ProgressiveNapsacSampler<4>(&points,
+	{
+		gcransac::sampler::UniformSampler main_sampler(&points);
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+				mcons::ModelData,
+				clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, mcons::utils::DefaultHomographyEstimator, 4>,
+			mcons::utils::DefaultHomographyEstimator,
+			gcransac::sampler::UniformSampler> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
+
+	} else if (kSamplerId_ == 1) // Initializing a Progressive NAPSAC sampler. This requires the points to be ordered according to the quality.
+	{		
+		gcransac::sampler::ProgressiveNapsacSampler<4> main_sampler(&points,
 			{ 16, 8, 4, 2 },	// The layer of grids. The cells of the finest grid are of dimension 
 								// (kSourceImageWidth_ / 16) * (kSourceImageHeight_ / 16)  * (kDestinationImageWidth_ / 16)  (kDestinationImageHeight_ / 16), etc.
 			kSampleSize, // The size of a minimal sample
@@ -207,27 +241,74 @@ int findHomographies_(
 				static_cast<double>(kSourceImageHeight_), // The height of the source image
 				static_cast<double>(kDestinationImageWidth_), // The width of the destination image
 				static_cast<double>(kDestinationImageHeight_) } // The height of the destination image
-			)); // The length (i.e., 0.5 * <point number> iterations) of fully blending to global sampling 
+			); // The length (i.e., 0.5 * <point number> iterations) of fully blending to global sampling 
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+				mcons::ModelData,
+				clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, mcons::utils::DefaultHomographyEstimator, 4>,
+			mcons::utils::DefaultHomographyEstimator,
+			gcransac::sampler::ProgressiveNapsacSampler<4>> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
 	}
-	else if (kSamplerId_ == 2) // Initializing a NAPSAC sampler
+	else if (kSamplerId_ == 2) 
 	{
-		main_sampler = std::unique_ptr<AbstractSampler>(
-			new gcransac::sampler::NapsacSampler<AbstractNeighborhood>(&points, neighborhood_graph.get()));
-	}
-	else if (kSamplerId_ == 3) // Initializing a NAPSAC sampler
-	{
-		main_sampler = std::unique_ptr<AbstractSampler>(
-			new gcransac::sampler::NapsacSampler<AbstractNeighborhood>(&points, neighborhood_graph.get()));
-	}
-	else if (kSamplerId_ == 4) 
-	{
-		/*main_sampler = std::unique_ptr<AbstractSampler>(
-			new gcransac::sampler::ConnectedComponentSampler(&points,
+		if (kMinimumComponentDistance_ > kMaximumComponentDistance_ ||
+			kComponentPartition_ < 0)
+		{
+			fprintf(stderr, "Incorrect parameters for the Connected Component sampler. ");
+			return 0;			
+		}
+
+		gcransac::sampler::ConnectedComponentSampler main_sampler(&points,
 				estimator.sampleSize(),
-				20,
-				200,
-				5,
-				false));*/
+				kMinimumComponentDistance_,
+				kMaximumComponentDistance_,
+				kComponentPartition_);
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+				mcons::ModelData,
+				clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, mcons::utils::DefaultHomographyEstimator, 4>,
+			mcons::utils::DefaultHomographyEstimator,
+			gcransac::sampler::ConnectedComponentSampler> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
 	}
 	else
 	{
@@ -235,37 +316,6 @@ int findHomographies_(
 			kSamplerId_);
 		return 0;
 	}
-
-	// The local optimization sampler is used inside the local optimization
-	gcransac::sampler::UniformSampler local_optimization_sampler(&points);
-
-	typedef progx::MultiConsensusFitting<
-		clustering::density::DBScanClustering<
-			progx::ModelData,
-			clustering::distances::TanimotoDistance<progx::ModelData>>,
-		clustering::distances::TanimotoDistance<progx::ModelData>,
-		clustering::losses::MAGSACLoss<double, progx::utils::DefaultHomographyEstimator, 4>,
-		progx::utils::DefaultHomographyEstimator,
-		AbstractSampler> ActualMultiConsensusMethod;
-
-	ActualMultiConsensusMethod multiConsensusMethod;
-
-	auto& settings = multiConsensusMethod.getMutableSettings();
-	settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
-	settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
-	settings.maximumIterations = kMaximumIterations_;
-	settings.minimumInlierNumber = kMinimumPointNumber_;
-	settings.startingHypothesisNumber = kStartingHypothesisNumber_;
-	settings.addedHypothesisNumber = kAddedHypothesisNumber_;
-	settings.confidence = kConfidence_;
-
-	std::vector<gcransac::Model> models;
-	std::vector<progx::ModelData> modelData;
-	multiConsensusMethod.run(
-		points,
-		*main_sampler,
-		models,
-		modelData);
 
 	homographies_.reserve(9 * models.size());
 
@@ -301,10 +351,13 @@ int findTwoViewMotions_(
 	const size_t& kAddedHypothesisNumber_,
 	const size_t& kMaximumIterations_,
 	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
 	const size_t& kSamplerId_)
 {
 	// Initializing the estimator object
-	progx::utils::DefaultFundamentalMatrixEstimator estimator;
+	mcons::utils::DefaultFundamentalMatrixEstimator estimator;
 
 	const size_t num_tents = correspondences_.size() / 4;
 	cv::Mat points(num_tents, 4, CV_64F, &correspondences_[0]);
@@ -313,23 +366,46 @@ int findTwoViewMotions_(
 	typedef gcransac::neighborhood::NeighborhoodGraph<cv::Mat> AbstractNeighborhood;
 	std::unique_ptr<AbstractNeighborhood> neighborhood_graph;
 
-	if (kSamplerId_ == 2)
-		neighborhood_graph = std::unique_ptr<AbstractNeighborhood>(
-			new gcransac::neighborhood::FlannNeighborhoodGraph(&points, kNeighborhoodRadius_));
-	else if (kSamplerId_ == 3)
-		neighborhood_graph = std::unique_ptr<AbstractNeighborhood>(
-			new gcransac::neighborhood::BruteForceNeighborhoodGraph(&points, kNeighborhoodRadius_));
-
 	// Initialize the samplers
 	// The main sampler is used for sampling in the main RANSAC loop
 	constexpr size_t kSampleSize = gcransac::utils::DefaultFundamentalMatrixEstimator::sampleSize();
-	typedef gcransac::sampler::Sampler<cv::Mat, size_t> AbstractSampler;
-	std::unique_ptr<AbstractSampler> main_sampler;
+
+	std::vector<gcransac::Model> models;
+	std::vector<mcons::ModelData> modelData;
+
 	if (kSamplerId_ == 0) // Initializing a RANSAC-like uniformly random sampler
-		main_sampler = std::unique_ptr<AbstractSampler>(new gcransac::sampler::UniformSampler(&points));
-	else if (kSamplerId_ == 1) // Initializing a Progressive NAPSAC sampler. This requires the points to be ordered according to the quality.
-	{				
-		main_sampler = std::unique_ptr<AbstractSampler>(new gcransac::sampler::ProgressiveNapsacSampler<4>(&points,
+	{
+		gcransac::sampler::UniformSampler main_sampler(&points);
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+			mcons::ModelData,
+			clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, mcons::utils::DefaultFundamentalMatrixEstimator, 4>,
+			mcons::utils::DefaultFundamentalMatrixEstimator,
+			gcransac::sampler::UniformSampler> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
+
+	} else if (kSamplerId_ == 1) // Initializing a Progressive NAPSAC sampler. This requires the points to be ordered according to the quality.
+	{		
+		gcransac::sampler::ProgressiveNapsacSampler<4> main_sampler(&points,
 			{ 16, 8, 4, 2 },	// The layer of grids. The cells of the finest grid are of dimension 
 								// (kSourceImageWidth_ / 16) * (kSourceImageHeight_ / 16)  * (kDestinationImageWidth_ / 16)  (kDestinationImageHeight_ / 16), etc.
 			kSampleSize, // The size of a minimal sample
@@ -337,67 +413,74 @@ int findTwoViewMotions_(
 				static_cast<double>(kSourceImageHeight_), // The height of the source image
 				static_cast<double>(kDestinationImageWidth_), // The width of the destination image
 				static_cast<double>(kDestinationImageHeight_) } // The height of the destination image
-			)); // The length (i.e., 0.5 * <point number> iterations) of fully blending to global sampling 
+			); // The length (i.e., 0.5 * <point number> iterations) of fully blending to global sampling 
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+			mcons::ModelData,
+			clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, mcons::utils::DefaultFundamentalMatrixEstimator, 4>,
+			mcons::utils::DefaultFundamentalMatrixEstimator,
+			gcransac::sampler::ProgressiveNapsacSampler<4>> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
 	}
-	else if (kSamplerId_ == 2) // Initializing a NAPSAC sampler
+	else if (kSamplerId_ == 2) 
 	{
-		main_sampler = std::unique_ptr<AbstractSampler>(
-			new gcransac::sampler::NapsacSampler<AbstractNeighborhood>(&points, neighborhood_graph.get()));
-	}
-	else if (kSamplerId_ == 3) // Initializing a NAPSAC sampler
-	{
-		main_sampler = std::unique_ptr<AbstractSampler>(
-			new gcransac::sampler::NapsacSampler<AbstractNeighborhood>(&points, neighborhood_graph.get()));
-	}
-	else if (kSamplerId_ == 4) 
-	{
-		/*main_sampler = std::unique_ptr<AbstractSampler>(
-			new gcransac::sampler::ConnectedComponentSampler(&points,
+		gcransac::sampler::ConnectedComponentSampler main_sampler(&points,
 				estimator.sampleSize(),
-				20,
-				200,
-				5,
-				false));*/
+				kMinimumComponentDistance_,
+				kMaximumComponentDistance_,
+				kComponentPartition_);
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+			mcons::ModelData,
+			clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, mcons::utils::DefaultFundamentalMatrixEstimator, 4>,
+			mcons::utils::DefaultFundamentalMatrixEstimator,
+			gcransac::sampler::ConnectedComponentSampler> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
 	}
 	else
 	{
 		fprintf(stderr, "Unknown sampler identifier: %d. The accepted samplers are 0 (uniform sampling), 1 (P-NAPSAC sampling), 2 (NAPSAC sampling on FLANN neighborhood), 3 (NAPSAC sampling on BF neighborhood), 4 (CC Sampler)\n",
 			kSamplerId_);
 		return 0;
-	}
-
-	// The local optimization sampler is used inside the local optimization
-	gcransac::sampler::UniformSampler local_optimization_sampler(&points);
-
-	// Applying Progressive-X
-	typedef progx::MultiConsensusFitting<
-		clustering::density::DBScanClustering<
-		progx::ModelData,
-		clustering::distances::TanimotoDistance<progx::ModelData>>,
-		clustering::distances::TanimotoDistance<progx::ModelData>,
-		clustering::losses::MAGSACLoss<double, progx::utils::DefaultFundamentalMatrixEstimator, 4>,
-		progx::utils::DefaultFundamentalMatrixEstimator,
-		AbstractSampler> ActualMultiConsensusMethod;
-
-	ActualMultiConsensusMethod multiConsensusMethod;
-
-	auto& settings = multiConsensusMethod.getMutableSettings();
-	settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
-	settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
-	settings.maximumIterations = kMaximumIterations_;
-	settings.minimumInlierNumber = kMinimumPointNumber_;
-	settings.startingHypothesisNumber = kStartingHypothesisNumber_;
-	settings.addedHypothesisNumber = kAddedHypothesisNumber_;
-	settings.confidence = kConfidence_;
-
-	std::vector<gcransac::Model> models;
-	std::vector<progx::ModelData> modelData;
-
-	multiConsensusMethod.run(
-		points,
-		*main_sampler,
-		models,
-		modelData);
+	}	
 
 	motions_.reserve(9 * models.size());
 
@@ -416,6 +499,242 @@ int findTwoViewMotions_(
 	}
 
 	return models.size();
+}
+
+int findRigidMotions_(
+	std::vector<double>& subspaces_,
+	std::vector<double>& motions_,
+	const double& kInlierOutlierThreshold_,
+	const double& kConfidence_,
+	const double& kNeighborhoodRadius_,
+	const double& kMaximumTanimotoSimilarity_,
+	const size_t& kStartingHypothesisNumber_,
+	const size_t& kAddedHypothesisNumber_,
+	const size_t& kMaximumIterations_,
+	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
+	const size_t& kSamplerId_)
+{
+	fprintf(stderr, "Multiple rigid motion fitting is not yet implemented.");
+	return 0;
+
+	// Initializing the estimator object
+	mcons::utils::DefaultLinearSubspaceEstimator estimator;
+
+	const size_t num_tents = subspaces_.size() / 5;
+	cv::Mat points(num_tents, 5, CV_64F, &subspaces_[0]);
+	
+	// Initializing the neighborhood structure based on the provided paramereters
+	typedef gcransac::neighborhood::NeighborhoodGraph<cv::Mat> AbstractNeighborhood;
+	std::unique_ptr<AbstractNeighborhood> neighborhood_graph;
+
+	// Initialize the samplers
+	// The main sampler is used for sampling in the main RANSAC loop
+	constexpr size_t kSampleSize = mcons::utils::DefaultLinearSubspaceEstimator::sampleSize();
+
+	std::vector<gcransac::Model> models;
+	std::vector<mcons::ModelData> modelData;
+
+	if (kSamplerId_ == 0) // Initializing a RANSAC-like uniformly random sampler
+	{
+		gcransac::sampler::UniformSampler main_sampler(&points);
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+			mcons::ModelData,
+			clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, mcons::utils::DefaultLinearSubspaceEstimator, 4>,
+			mcons::utils::DefaultLinearSubspaceEstimator,
+			gcransac::sampler::UniformSampler> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
+
+		std::cout << modelData[0].inliers.size() << std::endl;
+	}
+	else
+	{
+		fprintf(stderr, "Unknown sampler identifier: %d. The accepted samplers are 0 (uniform sampling)\n",
+			kSamplerId_);
+		return 0;
+	}	
+
+	motions_.reserve(5 * models.size());
+
+	// Saving the homography parameters
+	for (const auto &model : models)
+	{
+		motions_.emplace_back(model.descriptor(0));
+		motions_.emplace_back(model.descriptor(1));
+		motions_.emplace_back(model.descriptor(2));
+		motions_.emplace_back(model.descriptor(3));
+		motions_.emplace_back(model.descriptor(4));
+	}
+
+	return models.size();	
+}
+
+
+int findPlanes_(
+	std::vector<double>& correspondences_,
+	std::vector<double>& planes_,
+	const double& kInlierOutlierThreshold_,
+	const double& kConfidence_,
+	const double& kNeighborhoodRadius_,
+	const double& kMaximumTanimotoSimilarity_,
+	const size_t& kStartingHypothesisNumber_,
+	const size_t& kAddedHypothesisNumber_,
+	const size_t& kMaximumIterations_,
+	const size_t& kMinimumPointNumber_,
+	const double &kMinimumComponentDistance_,
+	const double &kMaximumComponentDistance_,
+	const int &kComponentPartition_,
+	const size_t& kSamplerId_)
+{
+	fprintf(stderr, "Multiple plane fitting is not yet implemented.");
+	return 0;
+
+	// Initializing the estimator object
+	gcransac::utils::Default3DPlaneEstimator estimator;
+
+	const size_t num_tents = correspondences_.size() / 3;
+	cv::Mat points(num_tents, 3, CV_64F, &correspondences_[0]);
+
+	// Initialize the samplers
+	// The main sampler is used for sampling in the main RANSAC loop
+	constexpr size_t kSampleSize = gcransac::utils::Default3DPlaneEstimator::sampleSize();
+
+	std::vector<gcransac::Model> models;
+	std::vector<mcons::ModelData> modelData;
+
+	if (kSamplerId_ == 0) // Initializing a RANSAC-like uniformly random sampler
+	{
+		gcransac::sampler::UniformSampler main_sampler(&points);
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+			mcons::ModelData,
+			clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, gcransac::utils::Default3DPlaneEstimator, 4>,
+			gcransac::utils::Default3DPlaneEstimator,
+			gcransac::sampler::UniformSampler> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
+
+	} else if (kSamplerId_ == 1) // Initializing a Progressive NAPSAC sampler. This requires the points to be ordered according to the quality.
+	{		
+		gcransac::neighborhood::FlannNeighborhoodGraph neighborhood(&points, kNeighborhoodRadius_);
+		gcransac::sampler::NapsacSampler main_sampler(&points, &neighborhood); 
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+			mcons::ModelData,
+			clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, gcransac::utils::Default3DPlaneEstimator, 4>,
+			gcransac::utils::Default3DPlaneEstimator,
+			gcransac::sampler::NapsacSampler<gcransac::neighborhood::FlannNeighborhoodGraph>> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
+	}
+	else if (kSamplerId_ == 2) 
+	{
+		gcransac::neighborhood::BruteForceNeighborhoodGraph neighborhood(&points, kNeighborhoodRadius_);
+		gcransac::sampler::NapsacSampler main_sampler(&points, &neighborhood); 
+
+		typedef mcons::MultiConsensusFitting<
+			clustering::density::DBScanClustering<
+			mcons::ModelData,
+			clustering::distances::TanimotoDistance<mcons::ModelData>>,
+			clustering::distances::TanimotoDistance<mcons::ModelData>,
+			clustering::losses::MAGSACLoss<double, gcransac::utils::Default3DPlaneEstimator, 4>,
+			gcransac::utils::Default3DPlaneEstimator,
+			gcransac::sampler::NapsacSampler<gcransac::neighborhood::BruteForceNeighborhoodGraph>> ActualMultiConsensusMethod;
+
+		ActualMultiConsensusMethod multiConsensusMethod;
+
+		auto& settings = multiConsensusMethod.getMutableSettings();
+		settings.inlierOutlierThreshold = kInlierOutlierThreshold_;
+		settings.modelDistanceThreshold = kMaximumTanimotoSimilarity_;
+		settings.maximumIterations = kMaximumIterations_;
+		settings.minimumInlierNumber = kMinimumPointNumber_;
+		settings.startingHypothesisNumber = kStartingHypothesisNumber_;
+		settings.addedHypothesisNumber = kAddedHypothesisNumber_;
+		settings.confidence = kConfidence_;
+
+		multiConsensusMethod.run(
+			points,
+			main_sampler,
+			models,
+			modelData);	
+	}
+	else
+	{
+		fprintf(stderr, "Unknown sampler identifier: %d. The accepted samplers are 0 (uniform sampling), 1 (P-NAPSAC sampling), 2 (NAPSAC sampling on FLANN neighborhood), 3 (NAPSAC sampling on BF neighborhood), 4 (CC Sampler)\n",
+			kSamplerId_);
+		return 0;
+	}	
+
+	planes_.reserve(4 * models.size());
+
+	// Saving the homography parameters
+	for (const auto &model : models)
+	{
+		planes_.emplace_back(model.descriptor(0));
+		planes_.emplace_back(model.descriptor(1));
+		planes_.emplace_back(model.descriptor(2));
+		planes_.emplace_back(model.descriptor(3));
+	}
+
+	return models.size();	
 }
 
 void getLabeling_(
@@ -442,6 +761,16 @@ void getLabeling_(
 		dataDimension = 4;
 		modelDimensionRow = 3;
 		modelDimensionCol = 1;		
+	} else if (kModelType_ == 3)
+	{
+		dataDimension = 3;
+		modelDimensionRow = 4;
+		modelDimensionCol = 1;		
+	} else if (kModelType_ == 4)
+	{
+		dataDimension = 5;
+		modelDimensionRow = 5;
+		modelDimensionCol = 1;		
 	}
 
 	// Calculating the point number
@@ -466,7 +795,7 @@ void getLabeling_(
 	switch (kModelType_)
 	{
 		case 0:
-			getLabeling<progx::utils::DefaultHomographyEstimator>(
+			getLabeling<mcons::utils::DefaultHomographyEstimator>(
 				points,
 				models,
 				kNeighborhoodSize_,
@@ -477,7 +806,7 @@ void getLabeling_(
 				maxLabel_);
 			break;
 		case 1:
-			getLabeling<progx::utils::DefaultFundamentalMatrixEstimator>(
+			getLabeling<mcons::utils::DefaultFundamentalMatrixEstimator>(
 				points,
 				models,
 				kNeighborhoodSize_,
@@ -489,6 +818,28 @@ void getLabeling_(
 			break;
 		case 2:
 			getLabeling<DefaultVanishingPointEstimator>(
+				points,
+				models,
+				kNeighborhoodSize_,
+				kInlierOutlierThreshold_,
+				kSpatialWeight_,
+				kLabelCost_,
+				labeling_,
+				maxLabel_);
+			break;
+		case 3:
+			getLabeling<gcransac::utils::Default3DPlaneEstimator>(
+				points,
+				models,
+				kNeighborhoodSize_,
+				kInlierOutlierThreshold_,
+				kSpatialWeight_,
+				kLabelCost_,
+				labeling_,
+				maxLabel_);
+			break;
+		case 4:
+			getLabeling<mcons::utils::DefaultLinearSubspaceEstimator>(
 				points,
 				models,
 				kNeighborhoodSize_,
@@ -523,6 +874,16 @@ void getSoftLabeling_(
 		dataDimension = 4;
 		modelDimensionRow = 3;
 		modelDimensionCol = 1;		
+	} else if (kModelType_ == 3)
+	{
+		dataDimension = 3;
+		modelDimensionRow = 4;
+		modelDimensionCol = 1;		
+	} else if (kModelType_ == 4)
+	{
+		dataDimension = 5;
+		modelDimensionRow = 5;
+		modelDimensionCol = 1;		
 	}
 
 	// Calculating the point number
@@ -550,11 +911,15 @@ void getSoftLabeling_(
 
 	// Use homography model
 	if (kModelType_ == 0)
-		estimator = std::unique_ptr<AbstractEstimator>(new progx::utils::DefaultHomographyEstimator());
+		estimator = std::unique_ptr<AbstractEstimator>(new mcons::utils::DefaultHomographyEstimator());
 	else if (kModelType_ == 1)
-		estimator = std::unique_ptr<AbstractEstimator>(new progx::utils::DefaultFundamentalMatrixEstimator());
+		estimator = std::unique_ptr<AbstractEstimator>(new mcons::utils::DefaultFundamentalMatrixEstimator());
 	else if (kModelType_ == 2)
 		estimator = std::unique_ptr<AbstractEstimator>(new DefaultVanishingPointEstimator());
+	else if (kModelType_ == 3)
+		estimator = std::unique_ptr<AbstractEstimator>(new gcransac::utils::Default3DPlaneEstimator());
+	else if (kModelType_ == 4)
+		estimator = std::unique_ptr<AbstractEstimator>(new mcons::utils::DefaultLinearSubspaceEstimator());
 		
 	// Calculating the squared threshold
 	const double kSquaredThreshold = kInlierOutlierThreshold_ * kInlierOutlierThreshold_;

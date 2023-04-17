@@ -97,6 +97,9 @@ py::tuple findHomographies(
 	int added_hypothesis_number,
 	int max_iters,
 	int minimum_point_number,
+	double minimum_component_distance,
+	double maximum_component_distance,
+	int component_partition,
 	int sampler_id)
 {
 	py::buffer_info buf1 = corrs_.request();
@@ -129,6 +132,9 @@ py::tuple findHomographies(
 		added_hypothesis_number,
 		max_iters,
 		minimum_point_number,
+		minimum_component_distance,
+		maximum_component_distance,
+		component_partition,
 		sampler_id);
 
 	py::array_t<double> homographies_ = py::array_t<double>({ static_cast<size_t>(num_models) * 3, 3 });
@@ -151,6 +157,9 @@ py::tuple findTwoViewMotions(
 	int added_hypothesis_number,
 	int max_iters,
 	int minimum_point_number,
+	double minimum_component_distance,
+	double maximum_component_distance,
+	int component_partition,
 	int sampler_id)
 {
 	py::buffer_info buf1 = corrs_.request();
@@ -183,6 +192,9 @@ py::tuple findTwoViewMotions(
 		added_hypothesis_number,
 		max_iters,
 		minimum_point_number,
+		minimum_component_distance,
+		maximum_component_distance,
+		component_partition,
 		sampler_id);
 
 	py::array_t<double> motions_ = py::array_t<double>({ static_cast<size_t>(num_models) * 3, 3 });
@@ -193,18 +205,76 @@ py::tuple findTwoViewMotions(
 	return motions_;
 }
 
+py::tuple findRigidMotions(
+	py::array_t<double>  subspaces_,
+	double threshold,
+	double confidence,
+	double neighborhood_ball_radius,
+	double maximum_tanimoto_similarity,
+	int starting_hypothesis_number,
+	int added_hypothesis_number,
+	int max_iters,
+	int minimum_point_number,
+	double minimum_component_distance,
+	double maximum_component_distance,
+	int component_partition,
+	int sampler_id)
+{
+	py::buffer_info buf1 = subspaces_.request();
+	size_t NUM_TENTS = buf1.shape[0];
+	size_t DIM = buf1.shape[1];
+
+	if (DIM != 5) {
+		throw std::invalid_argument("corrs should be an array with dims [n,5], n>=4");
+	}
+	if (NUM_TENTS < 4) {
+		throw std::invalid_argument("corrs should be an array with dims [n,5], n>=4");
+	}
+
+	double* ptr1 = (double*)buf1.ptr;
+	std::vector<double> subspaces;
+	subspaces.assign(ptr1, ptr1 + buf1.size);
+
+	std::vector<double> motions;
+
+	int num_models = findRigidMotions_(
+		subspaces,
+		motions,
+		threshold,
+		confidence,
+		neighborhood_ball_radius,
+		maximum_tanimoto_similarity,
+		starting_hypothesis_number,
+		added_hypothesis_number,
+		max_iters,
+		minimum_point_number,
+		minimum_component_distance,
+		maximum_component_distance,
+		component_partition,
+		sampler_id);
+		
+	py::array_t<double> motions_ = py::array_t<double>({ static_cast<size_t>(num_models), 5 });
+	py::buffer_info buf2 = motions_.request();
+	double* ptr2 = (double*)buf2.ptr;
+	for (size_t i = 0; i < 5 * num_models; i++)
+		ptr2[i] = motions[i];
+	return motions_;
+}
+
 py::tuple findPlanes(
 	py::array_t<double>  points,
 	double threshold,
-	double conf,
-	double spatial_coherence_weight,
+	double confidence,
 	double neighborhood_ball_radius,
 	double maximum_tanimoto_similarity,
+	int starting_hypothesis_number,
+	int added_hypothesis_number,
 	int max_iters,
 	int minimum_point_number,
-	int sampler_id,
-	double scoring_exponent,
-	bool do_logging) 
+	double minimum_component_distance,
+	double maximum_component_distance,
+	int component_partition,
+	int sampler_id)
 {		
 	py::buffer_info buf1 = points.request();
 	size_t NUM_TENTS = buf1.shape[0];
@@ -223,27 +293,26 @@ py::tuple findPlanes(
 
 	std::vector<double> planes;
 	
-	int num_models = 0;
-	/*int num_models = findPlanes_(
+	int num_models = findPlanes_(
 		points_,
-		labeling,
 		planes,
-		spatial_coherence_weight,
 		threshold,
-		conf,
+		confidence,
 		neighborhood_ball_radius,
 		maximum_tanimoto_similarity,
+		starting_hypothesis_number,
+		added_hypothesis_number,
 		max_iters,
 		minimum_point_number,
-		maximum_model_number,
-		sampler_id,
-		scoring_exponent,
-		do_logging);*/
+		minimum_component_distance,
+		maximum_component_distance,
+		component_partition,
+		sampler_id);
 	
-	py::array_t<double> planes_ = py::array_t<double>({ static_cast<size_t>(num_models), 3 });
+	py::array_t<double> planes_ = py::array_t<double>({ static_cast<size_t>(num_models), 4 });
 	py::buffer_info buf2 = planes_.request();
 	double *ptr2 = (double *)buf2.ptr;
-	for (size_t i = 0; i < 3 * num_models; i++)
+	for (size_t i = 0; i < 4 * num_models; i++)
 		ptr2[i] = planes[i];
 	return planes_;
 }
@@ -350,7 +419,7 @@ py::array_t<double> getSoftLabeling(
 		if (DIM_MODELS != 3) 
 			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=3");
 	// 6D rigid pose estimaton
-	} else if (model_type == 3)
+	} else /*if (model_type == 3)
 	{
 		if (DIM != 5) {
 			throw std::invalid_argument("Points should be an array with dims [n,5], n>=3, for 6D pose estimation from 2D-3D correspondences.");
@@ -361,7 +430,7 @@ py::array_t<double> getSoftLabeling(
 		if (DIM_MODELS != 12) 
 			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=12, where the pose (i.e., [R | t]) elements are in a row-major order.");
 	// Plane estimation
-	} else if (model_type == 4)
+	} else*/ if (model_type == 3)
 	{
 		if (DIM != 3) {
 			throw std::invalid_argument("Points should be an array with dims [n,3], n>=3, for 3D plane estimation.");
@@ -371,6 +440,17 @@ py::array_t<double> getSoftLabeling(
 		}
 		if (DIM_MODELS != 4) 
 			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=4");
+	// Rigid motion estimation
+	} else if (model_type == 4)
+	{
+		if (DIM != 5) {
+			throw std::invalid_argument("Points should be an array with dims [n,5], n>=4, for rigid motion estimation.");
+		}
+		if (NUM_TENTS < 4) {
+			throw std::invalid_argument("Points should be an array with dims [n,5], n>=4, for rigid motion estimation.");
+		}
+		if (DIM_MODELS != 5) 
+			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=5");
 	}
 
 	double *ptr = (double *)buf.ptr;
@@ -451,7 +531,7 @@ py::array_t<int> getLabeling(
 		if (DIM_MODELS != 3) 
 			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=3");
 	// 6D rigid pose estimaton
-	} else if (model_type == 3)
+	} else /*if (model_type == 3)
 	{
 		if (DIM != 5) {
 			throw std::invalid_argument("Points should be an array with dims [n,5], n>=3, for 6D pose estimation from 2D-3D correspondences.");
@@ -462,7 +542,7 @@ py::array_t<int> getLabeling(
 		if (DIM_MODELS != 12) 
 			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=12, where the pose (i.e., [R | t]) elements are in a row-major order.");
 	// Plane estimation
-	} else if (model_type == 4)
+	} else*/ if (model_type == 3)
 	{
 		if (DIM != 3) {
 			throw std::invalid_argument("Points should be an array with dims [n,3], n>=3, for 3D plane estimation.");
@@ -472,6 +552,17 @@ py::array_t<int> getLabeling(
 		}
 		if (DIM_MODELS != 4) 
 			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=4");
+	// Rigid motion estimation
+	} else if (model_type == 4)
+	{
+		if (DIM != 5) {
+			throw std::invalid_argument("Points should be an array with dims [n,5], n>=4, for rigid motion estimation.");
+		}
+		if (NUM_TENTS < 4) {
+			throw std::invalid_argument("Points should be an array with dims [n,5], n>=4, for rigid motion estimation.");
+		}
+		if (DIM_MODELS != 5) 
+			throw std::invalid_argument("Models should be an array with dims [n,m], n>=1, m=5");
 	}
 
 	double *ptr = (double *)buf.ptr;
@@ -523,8 +614,9 @@ PYBIND11_PLUGIN(pymulticonsensus) {
            findTwoViewMotions,
 		   findPlanes,
 		   findVanishingPoints,
-		   getLabeling
-
+		   findRigidMotions,
+		   getLabeling,
+		   getSoftLabeling
     )doc");
 	
 	m.def("getLabeling", &getLabeling, R"doc(some doc)doc",
@@ -555,7 +647,10 @@ PYBIND11_PLUGIN(pymulticonsensus) {
 		py::arg("starting_hypothesis_number") = 20,
 		py::arg("added_hypothesis_number") = 50,
 		py::arg("max_iters") = 1000,
-		py::arg("minimum_point_number") = 2 * 4,
+		py::arg("minimum_point_number") = 3 * 4,
+		py::arg("minimum_component_distance") = 20,
+		py::arg("maximum_component_distance") = 200,
+		py::arg("component_partition") = 10,
 		py::arg("sampler_id") = 0);
 
 	m.def("findTwoViewMotions", &findTwoViewMotions, R"doc(some doc)doc",
@@ -572,6 +667,24 @@ PYBIND11_PLUGIN(pymulticonsensus) {
 		py::arg("added_hypothesis_number") = 50,
 		py::arg("max_iters") = 1000,
 		py::arg("minimum_point_number") = 2 * 7,
+		py::arg("minimum_component_distance") = 20,
+		py::arg("maximum_component_distance") = 200,
+		py::arg("component_partition") = 10,
+		py::arg("sampler_id") = 0);
+
+	m.def("findRigidMotions", &findRigidMotions, R"doc(some doc)doc",
+		py::arg("tracks"),
+		py::arg("threshold") = 3.0,
+		py::arg("confidence") = 0.90,
+		py::arg("neighborhood_ball_radius") = 20.0,
+		py::arg("maximum_tanimoto_similarity") = 0.9,
+		py::arg("starting_hypothesis_number") = 20,
+		py::arg("added_hypothesis_number") = 50,
+		py::arg("max_iters") = 1000,
+		py::arg("minimum_point_number") = 2 * 7,
+		py::arg("minimum_component_distance") = 20,
+		py::arg("maximum_component_distance") = 200,
+		py::arg("component_partition") = 10,
 		py::arg("sampler_id") = 0);
 
 	m.def("find6DPoses", &find6DPoses, R"doc(some doc)doc",
@@ -588,16 +701,18 @@ PYBIND11_PLUGIN(pymulticonsensus) {
 
 	m.def("findPlanes", &findPlanes, R"doc(some doc)doc",
 		py::arg("points"),
-		py::arg("threshold") = 4.0,
-		py::arg("conf") = 0.5,
-		py::arg("spatial_coherence_weight") = 0.0,
-		py::arg("neighborhood_ball_radius") = 200.0,
-		py::arg("maximum_tanimoto_similarity") = 0.4,
+		py::arg("threshold") = 3.0,
+		py::arg("confidence") = 0.99,
+		py::arg("neighborhood_ball_radius") = 20.0,
+		py::arg("maximum_tanimoto_similarity") = 0.9,
+		py::arg("starting_hypothesis_number") = 20,
+		py::arg("added_hypothesis_number") = 50,
 		py::arg("max_iters") = 1000,
-		py::arg("minimum_point_number") = 10,
-		py::arg("sampler_id") = 3,
-		py::arg("scoring_exponent") = 2,
-		py::arg("do_logging") = false);
+		py::arg("minimum_point_number") = 2 * 3,
+		py::arg("minimum_component_distance") = 20,
+		py::arg("maximum_component_distance") = 200,
+		py::arg("component_partition") = 10,
+		py::arg("sampler_id") = 1);
 
 	m.def("findVanishingPoints", &findVanishingPoints, R"doc(some doc)doc",
 		py::arg("lines"),

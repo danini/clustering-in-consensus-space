@@ -513,10 +513,11 @@ namespace pearl
 			alpha_expansion_engine->setLabelCost(model_complexity_weight);
 
 		// Set neighbourhood of each point
-		for (size_t point_idx = 0; point_idx < point_number; ++point_idx)
-			for (const size_t &neighbor_idx : neighborhood_graph_->getNeighbors(point_idx))
-				if (point_idx != neighbor_idx)
-					alpha_expansion_engine->setNeighbors(point_idx, neighbor_idx);
+		if (neighborhood_graph_ != nullptr)
+			for (size_t point_idx = 0; point_idx < point_number; ++point_idx)
+				for (const size_t &neighbor_idx : neighborhood_graph_->getNeighbors(point_idx))
+					if (point_idx != neighbor_idx)
+						alpha_expansion_engine->setNeighbors(point_idx, neighbor_idx);
 		
 		// If nothing has changed since the previous labeling, use
 		// the previous labels as initial values.

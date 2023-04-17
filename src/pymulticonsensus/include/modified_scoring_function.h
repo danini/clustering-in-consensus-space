@@ -40,7 +40,7 @@
 #include <unsupported/Eigen/Polynomials>
 #include <Eigen/Eigen>
 
-namespace progx
+namespace mcons
 {
 	/* RANSAC Scoring */
 	struct Score {

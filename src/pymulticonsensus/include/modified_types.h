@@ -57,7 +57,7 @@
 #include "estimators/solver_rigid_transformation_svd.h"
 #include "solver_subspace4.h"
 
-namespace progx
+namespace mcons
 {
 	namespace utils
 	{

@@ -36,7 +36,7 @@
 #include "estimators/solver_engine.h"
 #include "estimators/homography_estimator.h"
 
-namespace progx
+namespace mcons
 {
 	namespace estimator
 	{

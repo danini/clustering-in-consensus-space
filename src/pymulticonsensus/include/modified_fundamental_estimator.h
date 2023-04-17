@@ -55,7 +55,7 @@
 #include "estimators/solver_fundamental_matrix_plane_and_parallax.h"
 #include "estimators/solver_fundamental_matrix_eight_point.h"
 
-namespace progx
+namespace mcons
 {
 	namespace estimator
 	{
