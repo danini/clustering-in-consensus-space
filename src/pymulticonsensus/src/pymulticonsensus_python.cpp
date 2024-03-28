@@ -657,7 +657,7 @@ int findPlanes_(
 	} else if (kSamplerId_ == 1) // Initializing a Progressive NAPSAC sampler. This requires the points to be ordered according to the quality.
 	{		
 		gcransac::neighborhood::FlannNeighborhoodGraph neighborhood(&points, kNeighborhoodRadius_);
-		gcransac::sampler::NapsacSampler main_sampler(&points, &neighborhood); 
+		gcransac::sampler::NapsacSampler<gcransac::neighborhood::FlannNeighborhoodGraph> main_sampler(&points, &neighborhood); 
 
 		typedef mcons::MultiConsensusFitting<
 			clustering::density::DBScanClustering<
@@ -688,7 +688,7 @@ int findPlanes_(
 	else if (kSamplerId_ == 2) 
 	{
 		gcransac::neighborhood::BruteForceNeighborhoodGraph neighborhood(&points, kNeighborhoodRadius_);
-		gcransac::sampler::NapsacSampler main_sampler(&points, &neighborhood); 
+		gcransac::sampler::NapsacSampler<gcransac::neighborhood::BruteForceNeighborhoodGraph> main_sampler(&points, &neighborhood); 
 
 		typedef mcons::MultiConsensusFitting<
 			clustering::density::DBScanClustering<

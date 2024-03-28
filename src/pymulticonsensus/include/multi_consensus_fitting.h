@@ -568,6 +568,7 @@ namespace mcons
 		// Iterate through the clusters
 		for (size_t clusterIdx = 0; clusterIdx < kClusterNumber; ++clusterIdx)
 		{
+			std::vector<gcransac::Model> tmpRefitModel;
 			const std::vector<size_t>& currentInliers = clusterInliers_[clusterIdx].first;
 
 			if (currentInliers.size() < estimator_.nonMinimalSampleSize())
@@ -578,12 +579,14 @@ namespace mcons
 				points_,  // All points
 				&currentInliers[0], // The current sample
 				currentInliers.size(),
-				&newHypotheses)) // The estimated model parameters
+				&tmpRefitModel)) // The estimated model parameters
 			{
 				newHypothesisData.emplace_back(hypothesisData_[clusterIdx]);
 				continue;
 			}
 
+			newHypotheses.resize(newHypotheses.size() + 1);
+			newHypotheses[clusterIdx] = tmpRefitModel[0];
 			newHypothesisData.resize(newHypothesisData.size() + 1);
 			auto& currentData = newHypothesisData.back();
 

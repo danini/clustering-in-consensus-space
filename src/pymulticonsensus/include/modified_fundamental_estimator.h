@@ -97,7 +97,7 @@ namespace mcons
 				non_minimal_solver(std::make_shared<_NonMinimalSolverEngine>()),
 				// The lower bound of the inlier ratio which is required to pass the validity test.
 				// It is clamped to be in interval [0, 1].
-				minimum_inlier_ratio_in_validity_check(std::clamp(minimum_inlier_ratio_in_validity_check_, 0.0, 1.0)),
+				minimum_inlier_ratio_in_validity_check(minimum_inlier_ratio_in_validity_check_),
 				// A flag deciding if DEGENSAC should be used. DEGENSAC handles the cases when the points of the model originates from 
 				// a single plane, or almost from single plane.
 				use_degensac(use_degensac_),
