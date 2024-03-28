@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import random
 import cv2
 import csv
+from munkres import Munkres  # https://pypi.org/project/munkres/
 
 def get_soft_assignment(correspondences, homographies, inlier_threshold):
     model_number = int(homographies.shape[0] / 3)
@@ -135,6 +136,65 @@ def misclassification(segmentation, ref_segmentation):
    
     return np.min(miss) / n_labels
 
+def misclassification_hungarian(cluster_mask_est, cluster_mask_gt):
+    """
+    :param cluster_mask_est: estimated mask
+    :param cluster_mask_gt: ground truth mask
+    :return: number of error between the ground-truth and estimated cluster masks
+    """
+
+    # Get the list of different labels for the ground truth mask and the estimated one.
+    label_list_gt = list(set(cluster_mask_gt))
+    label_list_est = list(set(cluster_mask_est))
+
+    # Initialize the cost matrix
+    cost_matrix = np.empty(shape=(len(label_list_gt), len(label_list_est)))
+
+    # Fill the cost matrix for Munkres (Hungarian algorithm)
+    for i, gt_lbl in enumerate(label_list_gt):
+        # set as 1 only points with the current gt label
+        tmp_gt = np.where(cluster_mask_gt == gt_lbl, 1, 0)
+        for j, pred_lbl in enumerate(label_list_est):
+            # set as 1 only points with the current pred label
+            tmp_est = np.where(cluster_mask_est == pred_lbl, 1, 0)
+            cost_matrix[i, j] = np.count_nonzero(
+                np.where(tmp_gt + tmp_est == 1, 1, 0))  # rationale below
+
+    # Rationale: we need to fill a cost matrix, thus we need to count the number of errors,
+    # namely False Positives (FP) and False Negatives (FN).
+    # Both FP and FN are such that gt_lbl != pred_lbl and gt_lbl + pred_lbl == 1
+    # [(either gt_lbl == 0 and pred_lbl == 1) or  (either gt_lbl == 1 and pred_lbl == 0)].
+    # Note, we don't care about True Positives (TP), where gt_lbl == pred_lbl == 1,
+    # and True Negatives (TN), where gt_lbl == pred_lbl == 0, since they are not errors.
+
+    # Run Munkres algorithm
+    mnkrs = Munkres()
+    # Remark: the cost matrix must have num_of_rows <= num_of_cols (see documentation)
+    if len(label_list_gt) <= len(label_list_est):
+        match_pairs = mnkrs.compute(np.array(cost_matrix))
+        lbl_pred2gt_dict = dict([(j, i) for (i, j) in match_pairs])
+    else:  # otherwise, we compute invert rows and columns
+        cost_matrix = np.transpose(cost_matrix)
+        match_pairs = mnkrs.compute(np.array(cost_matrix))
+        lbl_pred2gt_dict = dict(match_pairs)
+
+    lbl_pred2gt_dict = {label_list_est[k]: label_list_gt[v]
+                        for k, v in lbl_pred2gt_dict.items()}
+
+    # Relabel cluster_mask_est according to the correct label mapping found by Munkres
+    clusters_mask_relabeled = []
+    for cl_idx in cluster_mask_est:
+        if cl_idx in lbl_pred2gt_dict:
+            clusters_mask_relabeled.append(lbl_pred2gt_dict[cl_idx])
+        else:
+            clusters_mask_relabeled.append(-1)
+    clusters_mask_relabeled = np.array(clusters_mask_relabeled)
+
+    # Compute the number of errors as the difference of the gt and relabelled arrays
+    errors = np.count_nonzero(cluster_mask_gt - clusters_mask_relabeled)
+
+    return errors / len(cluster_mask_gt)
+
 def random_color(label = None):
     if label is not None:
         if label == 0:
@@ -144,6 +204,15 @@ def random_color(label = None):
         elif label == 2:
             return (0, 0, 255)
     return (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+
+def resize_image(image, scale):
+    """
+    Resize an image based on the specified scale percentage.
+    """
+    width = int(image.shape[1] * scale)
+    height = int(image.shape[0] * scale)
+    dim = (width, height)
+    return cv2.resize(image, dim, interpolation=cv2.INTER_AREA)
 
 def draw_soft_assignment(img1, img2, assignments, correspondences, radius=4, figsize=(12,8)):
     point_number = assignments.shape[0]
@@ -166,6 +235,9 @@ def draw_soft_assignment(img1, img2, assignments, correspondences, radius=4, fig
             idx = np.where(model_indices)[0][0]
             cv2.circle(img1_cpy, (round(correspondences[point_idx][0]), round(correspondences[point_idx][1])), radius, colors[idx], -1)
             cv2.circle(img2_cpy, (round(correspondences[point_idx][2]), round(correspondences[point_idx][3])), radius, colors[idx], -1)
+
+    img1_cpy = resize_image(img1_cpy, 0.5)
+    img2_cpy = resize_image(img2_cpy, 0.5)
 
     # Plot the two images side by side using matplotlib.pyplot
     fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=figsize)
@@ -190,6 +262,9 @@ def draw_labeling(img1, img2, labeling, correspondences, radius=4, figsize=(12,8
                 cv2.circle(img1_cpy, (round(correspondences[i][0]), round(correspondences[i][1])), radius, color, -1)
                 cv2.circle(img2_cpy, (round(correspondences[i][2]), round(correspondences[i][3])), radius, color, -1)
 
+    img1_cpy = resize_image(img1_cpy, 0.5)
+    img2_cpy = resize_image(img2_cpy, 0.5)
+    
     # Plot the two images side by side using matplotlib.pyplot
     fig, (ax1, ax2) = plt.subplots(1, 2)
     fig.set_size_inches(figsize[0], figsize[1])
